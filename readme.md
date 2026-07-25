@@ -81,6 +81,54 @@ IMU型号：使用C板内置BMI088作为IMU\
     make -C build/ -j`nproc`
     ```
 
+#### ROS2 AUV Client
+
+安装并 source ROS2 后，CMake 会额外生成 `auv_client`。它从标准
+`sensor_msgs/msg/Image` 和 `sensor_msgs/msg/Imu` 话题接收已经对齐的数据，通过
+`/custom_client/self_is_red`（`std_msgs/msg/Bool`）选择敌方颜色，并将自瞄命令以 JSON
+字符串发布到 `/auto_aim/result`。`self_is_red=true` 时瞄准蓝方，`false` 时瞄准红方；收到
+第一条阵营消息前只输出安全结果：
+
+完整的输入输出、消息字段、时间同步、坐标系、标定和安全约定见
+[ROS 2 AUV Client 对外接口手册](docs/auv_client_ros_manual.md)。
+
+```bash
+./build/auv_client configs/AUVClient.yaml
+```
+
+运行前必须在 `configs/AUVClient.yaml` 中填写 `camera_matrix` 对应的
+`calibration_image_width` 和 `calibration_image_height`。发布端和客户端位于同一主机时，
+建议两路传感器话题均使用 `best_effort + keep_last(1)`，并在所用 DDS 实现支持时启用共享
+内存传输。`Image.header.stamp` 和 `Imu.header.stamp` 应由上游对齐后使用同一 ROS 发布时间；
+采集到该发布时间之间的固定延迟通过 `upstream_latency_ms` 补偿。
+
+#### 从 ROS2 图像话题标定相机
+
+`ros_calibrate_camera` 直接订阅 `configs/calibration.yaml` 中的 `ros_image_topic`。程序识别
+棋盘格标定板后，按 `s` 接受当前帧，采集多个不同位置和角度的样本后按 `q` 完成标定：
+
+```bash
+./build/ros_calibrate_camera configs/calibration.yaml \
+  --output-folder=assets/ros_camera_calibration
+```
+
+采集图片和 `calibration_result.yaml` 会写入输出目录；结果同时包含
+`calibration_image_width/height`、`camera_matrix` 和 `distort_coeffs`，可直接复制到
+`configs/AUVClient.yaml`。建议采集至少 10 帧，并让标定板覆盖画面中心、四角和不同倾角。
+
+完成相机内参标定后，先把上述结果复制到 `configs/calibration.yaml`，再运行 ROS2 手眼标定：
+
+```bash
+./build/ros_calibrate_handeye configs/calibration.yaml \
+  --output-folder=assets/ros_handeye_calibration
+```
+
+保持标定板不动，转动云台到不同 yaw、pitch、roll 后按 `s` 保存同步的图像与 IMU 姿态，
+建议采集至少 10 个旋转差异明显的姿态，最后按 `q` 求解。输出目录中的
+`handeye_result.yaml` 包含 `R_gimbal2imubody`、`R_camera2gimbal` 和 `t_camera2gimbal`，可复制
+到 `configs/AUVClient.yaml`。其中 `R_gimbal2imubody` 描述云台与 IMU 的轴向映射，需要先按
+实际安装方向填写；预览窗口中的 yaw/pitch/roll 用于检查该映射，手眼算法求解后两项。
+
 3. 运行demo:
     ```bash
     ./build/auto_aim_test
@@ -189,6 +237,8 @@ sp_vision_25
 │   ├── calibrate_camera.cpp             // 相机内参标定程序
 │   ├── calibrate_handeye.cpp            // 手眼标定程序
 │   ├── calibrate_robotworld_handeye.cpp // 手眼标定程序（同时计算标定板位置）
+│   ├── ros_calibrate_camera.cpp         // 从ROS2图像话题采集并标定相机内参
+│   ├── ros_calibrate_handeye.cpp        // 从ROS2图像和IMU话题进行手眼标定
 │   └── capture.cpp                      // 相机标定数据采集程序
 ├── CMakeLists.txt // CMake配置文件
 ├── configs        // 每台机器人的YAML配置文件

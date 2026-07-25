@@ -28,6 +28,21 @@ Tracker::Tracker(const std::string & config_path, Solver & solver)
 
 std::string Tracker::state() const { return state_; }
 
+void Tracker::set_enemy_color(Color enemy_color)
+{
+  if (enemy_color_ == enemy_color) return;
+
+  enemy_color_ = enemy_color;
+  detect_count_ = 0;
+  temp_lost_count_ = 0;
+  max_temp_lost_count_ = normal_temp_lost_count_;
+  state_ = "lost";
+  pre_state_ = "lost";
+  target_ = Target{};
+  last_timestamp_ = std::chrono::steady_clock::now();
+  tools::logger()->info("[Tracker] Enemy color changed to {}; tracker reset", COLORS[enemy_color_]);
+}
+
 std::list<Target> Tracker::track(
   std::list<Armor> & armors, std::chrono::steady_clock::time_point t, bool use_enemy_color)
 {
@@ -39,7 +54,7 @@ std::list<Target> Tracker::track(
     tools::logger()->warn("[Tracker] Large dt: {:.3f}s", dt);
     state_ = "lost";
   }
-  // 过滤掉非我方装甲板
+  // 过滤掉非敌方装甲板
   armors.remove_if([&](const auto_aim::Armor & a) { return a.color != enemy_color_; });
 
   // 过滤前哨站顶部装甲板
@@ -51,9 +66,9 @@ std::list<Target> Tracker::track(
 
   // 优先选择靠近图像中心的装甲板
   armors.sort([](const Armor & a, const Armor & b) {
-    cv::Point2f img_center(1440 / 2, 1080 / 2);  // TODO
-    auto distance_1 = cv::norm(a.center - img_center);
-    auto distance_2 = cv::norm(b.center - img_center);
+    const cv::Point2f normalized_image_center(0.5F, 0.5F);
+    auto distance_1 = cv::norm(a.center_norm - normalized_image_center);
+    auto distance_2 = cv::norm(b.center_norm - normalized_image_center);
     return distance_1 < distance_2;
   });
 
@@ -116,9 +131,9 @@ std::tuple<omniperception::DetectionResult, std::list<Target>> Tracker::track(
 
   // 优先选择靠近图像中心的装甲板
   armors.sort([](const Armor & a, const Armor & b) {
-    cv::Point2f img_center(1440 / 2, 1080 / 2);  // TODO
-    auto distance_1 = cv::norm(a.center - img_center);
-    auto distance_2 = cv::norm(b.center - img_center);
+    const cv::Point2f normalized_image_center(0.5F, 0.5F);
+    auto distance_1 = cv::norm(a.center_norm - normalized_image_center);
+    auto distance_2 = cv::norm(b.center_norm - normalized_image_center);
     return distance_1 < distance_2;
   });
 

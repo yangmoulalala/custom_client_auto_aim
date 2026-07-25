@@ -41,12 +41,23 @@ target_link_libraries(io MvCameraControl MVSDK usb-1.0 yaml-cpp serial)
 find_package(ament_cmake QUIET)
 find_package(rclcpp QUIET)
 find_package(std_msgs QUIET)
+find_package(sensor_msgs QUIET)
 find_package(rosidl_typesupport_cpp QUIET)
 find_package(sp_msgs QUIET)
 
+# AUV client only uses standard ROS2 messages and must not depend on sp_msgs.
+if(ament_cmake_FOUND AND rclcpp_FOUND AND std_msgs_FOUND AND sensor_msgs_FOUND)
+    message(STATUS "ROS2 standard messages found, compiling AUV client I/O.")
+    add_library(auv_io STATIC auv_client.cpp)
+    target_link_libraries(auv_io PUBLIC yaml-cpp nlohmann_json::nlohmann_json ${OpenCV_LIBS})
+    ament_target_dependencies(auv_io PUBLIC rclcpp sensor_msgs std_msgs)
+else()
+    message(STATUS "ROS2 standard message environment not found, skipping AUV client I/O.")
+endif()
+
 # 如果找不到 ROS 环境，则跳过 ROS 相关的部分
 if(NOT ament_cmake_FOUND OR NOT rclcpp_FOUND OR NOT std_msgs_FOUND OR NOT rosidl_typesupport_cpp_FOUND OR NOT sp_msgs_FOUND)
-    message(WARNING "ROS2 not found, skipping ROS2 specific code.")
+    message(WARNING "Navigation ROS2 dependencies not found, skipping sp_msgs-based ROS2 code.")
 else()
     message(STATUS "ROS2 environment found, compiling ROS2-related code.")
     

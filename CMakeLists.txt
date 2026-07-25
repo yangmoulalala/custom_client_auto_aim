@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.16.3)
 
 project(sp_vision)
 
+include(CTest)
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_BUILD_TYPE Release)
 message(STATUS "--------------------CMAKE_BUILD_TYPE: ${CMAKE_BUILD_TYPE}--------------------")
@@ -37,6 +39,37 @@ add_executable(auto_buff_debug_mpc src/auto_buff_debug_mpc.cpp)
 add_executable(uav src/uav.cpp)
 add_executable(uav_debug src/uav_debug.cpp)
 
+if(TARGET auv_io)
+    add_executable(auv_client src/auv_client.cpp)
+    target_link_libraries(
+        auv_client ${OpenCV_LIBS} fmt::fmt yaml-cpp nlohmann_json::nlohmann_json
+        auto_aim tools io auv_io)
+
+    if(BUILD_TESTING)
+        add_executable(auv_client_io_test tests/auv_client_io_test.cpp)
+        target_compile_definitions(
+            auv_client_io_test PRIVATE
+            AUV_CLIENT_TEST_CONFIG="${PROJECT_SOURCE_DIR}/tests/auv_client_io_test.yaml")
+        target_link_libraries(
+            auv_client_io_test ${OpenCV_LIBS} nlohmann_json::nlohmann_json auv_io)
+        add_test(NAME auv_client_io_test COMMAND auv_client_io_test)
+        set_tests_properties(
+            auv_client_io_test PROPERTIES TIMEOUT 15 ENVIRONMENT "ROS_LOG_DIR=/tmp")
+
+        add_executable(solver_image_size_test tests/solver_image_size_test.cpp)
+        target_compile_definitions(
+            solver_image_size_test PRIVATE
+            SOLVER_IMAGE_SIZE_TEST_CONFIG="${PROJECT_SOURCE_DIR}/tests/solver_image_size.yaml")
+        target_link_libraries(
+            solver_image_size_test ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim tools io)
+        add_test(NAME solver_image_size_test COMMAND solver_image_size_test)
+
+        add_executable(handeye_transform_test tests/handeye_transform_test.cpp)
+        target_link_libraries(handeye_transform_test ${OpenCV_LIBS})
+        add_test(NAME handeye_transform_test COMMAND handeye_transform_test)
+    endif()
+endif()
+
 target_link_libraries(standard ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim auto_buff tools io)
 target_link_libraries(mt_standard ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim auto_buff tools io)
 target_link_libraries(standard_mpc ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim auto_buff tools io)
@@ -59,6 +92,15 @@ target_link_libraries(calibrate_camera ${OpenCV_LIBS} fmt::fmt yaml-cpp tools)
 target_link_libraries(calibrate_handeye ${OpenCV_LIBS} fmt::fmt yaml-cpp tools)
 target_link_libraries(calibrate_robotworld_handeye ${OpenCV_LIBS} fmt::fmt yaml-cpp tools)
 target_link_libraries(split_video ${OpenCV_LIBS} fmt::fmt tools)
+
+if(TARGET auv_io)
+    add_executable(ros_calibrate_camera calibration/ros_calibrate_camera.cpp)
+    add_executable(ros_calibrate_handeye calibration/ros_calibrate_handeye.cpp)
+    target_link_libraries(
+        ros_calibrate_camera ${OpenCV_LIBS} fmt::fmt yaml-cpp tools auv_io)
+    target_link_libraries(
+        ros_calibrate_handeye ${OpenCV_LIBS} fmt::fmt yaml-cpp tools auv_io)
+endif()
 
 ##################tests##################
 add_executable(auto_aim_test tests/auto_aim_test.cpp)

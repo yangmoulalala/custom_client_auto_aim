@@ -18,6 +18,8 @@ public:
 
   void set_R_gimbal2world(const Eigen::Quaterniond & q);
 
+  bool set_image_size(const cv::Size & image_size);
+
   void solve(Armor & armor) const;
 
   std::vector<cv::Point2f> reproject_armor(
@@ -29,7 +31,10 @@ public:
 
 private:
   cv::Mat camera_matrix_;
+  cv::Mat calibration_camera_matrix_;
   cv::Mat distort_coeffs_;
+  cv::Size calibration_image_size_;
+  cv::Size image_size_;
   Eigen::Matrix3d R_gimbal2imubody_;
   Eigen::Matrix3d R_camera2gimbal_;
   Eigen::Vector3d t_camera2gimbal_;

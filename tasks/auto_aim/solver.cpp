@@ -2,6 +2,7 @@
 
 #include <yaml-cpp/yaml.h>
 
+#include <cmath>
 #include <vector>
 
 #include "tools/logger.hpp"
@@ -40,7 +41,13 @@ Solver::Solver(const std::string & config_path) : R_gimbal2world_(Eigen::Matrix3
   Eigen::Matrix<double, 3, 3, Eigen::RowMajor> camera_matrix(camera_matrix_data.data());
   Eigen::Matrix<double, 1, 5> distort_coeffs(distort_coeffs_data.data());
   cv::eigen2cv(camera_matrix, camera_matrix_);
+  calibration_camera_matrix_ = camera_matrix_.clone();
   cv::eigen2cv(distort_coeffs, distort_coeffs_);
+
+  if (yaml["calibration_image_width"] && yaml["calibration_image_height"]) {
+    calibration_image_size_ = {
+      yaml["calibration_image_width"].as<int>(), yaml["calibration_image_height"].as<int>()};
+  }
 }
 
 Eigen::Matrix3d Solver::R_gimbal2world() const { return R_gimbal2world_; }
@@ -49,6 +56,45 @@ void Solver::set_R_gimbal2world(const Eigen::Quaterniond & q)
 {
   Eigen::Matrix3d R_imubody2imuabs = q.toRotationMatrix();
   R_gimbal2world_ = R_gimbal2imubody_.transpose() * R_imubody2imuabs * R_gimbal2imubody_;
+}
+
+bool Solver::set_image_size(const cv::Size & image_size)
+{
+  if (image_size.width <= 0 || image_size.height <= 0) return false;
+  if (calibration_image_size_.width <= 0 || calibration_image_size_.height <= 0) {
+    tools::logger()->error(
+      "[Solver] calibration_image_width and calibration_image_height must be positive");
+    return false;
+  }
+  if (!image_size_.empty() && image_size != image_size_) {
+    tools::logger()->warn(
+      "[Solver] Runtime image resolution changed from {}x{} to {}x{}", image_size_.width,
+      image_size_.height, image_size.width, image_size.height);
+    return false;
+  }
+
+  const auto calibration_aspect =
+    static_cast<double>(calibration_image_size_.width) / calibration_image_size_.height;
+  const auto image_aspect = static_cast<double>(image_size.width) / image_size.height;
+  constexpr double MAX_ASPECT_RATIO_ERROR = 0.01;
+  if (std::abs(image_aspect / calibration_aspect - 1.0) > MAX_ASPECT_RATIO_ERROR) {
+    tools::logger()->error(
+      "[Solver] Image aspect ratio {:.6f} differs from calibration aspect ratio {:.6f}",
+      image_aspect, calibration_aspect);
+    return false;
+  }
+
+  const auto scale_x = static_cast<double>(image_size.width) / calibration_image_size_.width;
+  const auto scale_y = static_cast<double>(image_size.height) / calibration_image_size_.height;
+  camera_matrix_ = calibration_camera_matrix_.clone();
+  camera_matrix_.at<double>(0, 0) *= scale_x;
+  camera_matrix_.at<double>(0, 1) *= scale_x;
+  camera_matrix_.at<double>(0, 2) *= scale_x;
+  camera_matrix_.at<double>(1, 0) *= scale_y;
+  camera_matrix_.at<double>(1, 1) *= scale_y;
+  camera_matrix_.at<double>(1, 2) *= scale_y;
+  image_size_ = image_size;
+  return true;
 }
 
 //solvePnP（获得姿态）

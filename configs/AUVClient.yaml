@@ -1,0 +1,64 @@
+#####-----ROS2 AUV Client-----#####
+ros_image_topic: "/rm_video/image_processed"
+ros_imu_topic: "/custom_client/imu"
+ros_result_topic: "/auto_aim/result"
+
+bullet_speed: 23.0
+upstream_latency_ms: 0.0
+
+# 必须填写为下方 camera_matrix 标定时使用的图像分辨率。
+# 保持为 0 时 auv_client 会拒绝启动，避免使用错误内参。
+calibration_image_width: 480
+calibration_image_height: 270
+
+sync_tolerance_ms: 5
+sync_wait_ms: 10
+max_frame_age_ms: 100
+command_timeout_ms: 200
+
+enemy_color: "red"
+# enemy_color: "blue"
+
+#####-----分类器参数-----#####
+classify_model: assets/tiny_resnet.onnx
+min_confidence: 0.8
+
+#####-----传统识别参数-----#####
+threshold: 150
+max_angle_error: 45 # degree
+min_lightbar_ratio: 1.5
+max_lightbar_ratio: 20
+min_lightbar_length: 8
+min_armor_ratio: 1
+max_armor_ratio: 5
+max_side_ratio: 1.5
+max_rectangular_error: 25 # degree
+
+#####-----tracker参数-----#####
+min_detect_count: 5
+max_temp_lost_count: 15
+outpost_max_temp_lost_count: 150
+
+#####-----aimer参数-----#####
+yaw_offset: 0 # degree
+pitch_offset: 1.5 # degree
+comming_angle: 70 # degree
+leaving_angle: 30 # degree
+min_spin_speed: 2 # rad/s
+decision_speed: 12 # rad/s
+high_speed_delay_time: 0.005 # s
+low_speed_delay_time: 0.005 # s
+
+#####-----shooter参数-----#####
+first_tolerance: 2 # degree
+second_tolerance: 0.8 # degree
+judge_distance: 0.5
+auto_fire: true
+
+#####-----相机标定参数-----#####
+R_gimbal2imubody: [1, 0, 0, 0, 1, 0, 0, 0, 1]
+camera_matrix: [689.17782867242408, 0, 263.03005188708039, 0, 688.65887141546, 139.58627690456646, 0, 0, 1]
+distort_coeffs: [-0.27214187315547, 1.4224009167280049, 0.0045267040990549148, 0.0055930843150677383, 0]
+R_camera2gimbal: [0.014679100551504121, -0.025612577151355564, 0.99956416497324696, -0.99933044887885791, 0.033130661636021852, 0.015524599934928607, -0.033513847146798559, -0.99912279282940253, -0.025109099908115606]
+t_camera2gimbal: [-0.011407068198318614, -0.044912968154257979, 0.041049026928921747]
+
