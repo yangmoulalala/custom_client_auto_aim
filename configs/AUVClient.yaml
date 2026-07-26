@@ -4,7 +4,7 @@ ros_imu_topic: "/custom_client/imu"
 ros_result_topic: "/auto_aim/result"
 
 bullet_speed: 23.0
-upstream_latency_ms: 160.0
+upstream_latency_ms: 00.0
 
 # 必须填写为下方 camera_matrix 标定时使用的图像分辨率。
 # 保持为 0 时 auv_client 会拒绝启动，避免使用错误内参。
@@ -22,6 +22,8 @@ enemy_color: "red"
 #####-----神经网络参数-----#####
 yolo_name: yolov5
 yolov5_model_path: RobotDetectionModel/Model/0526.onnx
+# 0526.onnx 实测颜色输出顺序为蓝、红、灰、紫。
+yolov5_color_order: blue_red_gray_purple
 device: AUTO
 classify_model: assets/tiny_resnet.onnx
 min_confidence: 0.8
@@ -53,7 +55,7 @@ outpost_max_temp_lost_count: 10
 
 #####-----aimer参数-----#####
 yaw_offset: 0 # degree
-pitch_offset: 1.5 # degree
+pitch_offset: 0 # degree
 comming_angle: 70 # degree
 leaving_angle: 30 # degree
 min_spin_speed: 2 # rad/s
@@ -62,8 +64,8 @@ high_speed_delay_time: 0.005 # s
 low_speed_delay_time: 0.005 # s
 
 #####-----shooter参数-----#####
-first_tolerance: 2 # degree
-second_tolerance: 0.8 # degree
+first_tolerance: 5 # degree
+second_tolerance: 5 # degree
 judge_distance: 0.5
 auto_fire: true
 

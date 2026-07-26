@@ -15,6 +15,23 @@ bool require(bool condition, const std::string & message)
   if (!condition) std::cerr << message << '\n';
   return condition;
 }
+
+cv::Mat make_output(int color_id)
+{
+  cv::Mat output = cv::Mat::zeros(1, 22, CV_32F);
+  output.at<float>(0, 0) = 10;
+  output.at<float>(0, 1) = 10;
+  output.at<float>(0, 2) = 10;
+  output.at<float>(0, 3) = 30;
+  output.at<float>(0, 4) = 30;
+  output.at<float>(0, 5) = 30;
+  output.at<float>(0, 6) = 30;
+  output.at<float>(0, 7) = 10;
+  output.at<float>(0, 8) = 10;
+  output.at<float>(0, 9 + color_id) = 1;
+  output.at<float>(0, 13 + 3) = 1;
+  return output;
+}
 }  // namespace
 
 int main()
@@ -51,6 +68,19 @@ int main()
   try {
     auto_aim::YOLOV5 detector(AUV_CLIENT_CONFIG, false);
     const cv::Mat image(270, 480, CV_8UC3, cv::Scalar::all(0));
+
+    auto blue_output = make_output(0);
+    const auto blue_detections = detector.postprocess(1.0, blue_output, image, 0);
+    ok &= require(
+      blue_detections.size() == 1 && blue_detections.front().color == auto_aim::Color::blue,
+      "AUV 0526 color output 0 must map to blue");
+
+    auto red_output = make_output(1);
+    const auto red_detections = detector.postprocess(1.0, red_output, image, 0);
+    ok &= require(
+      red_detections.size() == 1 && red_detections.front().color == auto_aim::Color::red,
+      "AUV 0526 color output 1 must map to red");
+
     const auto detections = detector.detect(image, 0);
     for (const auto & armor : detections) {
       ok &= require(armor.points.size() == 4, "each detection must contain four keypoints");

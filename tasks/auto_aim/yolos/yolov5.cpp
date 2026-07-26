@@ -4,6 +4,7 @@
 #include <yaml-cpp/yaml.h>
 
 #include <filesystem>
+#include <stdexcept>
 
 #include "tools/img_tools.hpp"
 #include "tools/logger.hpp"
@@ -26,6 +27,17 @@ YOLOV5::YOLOV5(const std::string & config_path, bool debug)
   height = yaml["roi"]["height"].as<int>();
   use_roi_ = yaml["use_roi"].as<bool>();
   use_traditional_ = yaml["use_traditional"].as<bool>();
+  auto color_order = std::string{"red_blue_gray_purple"};
+  if (yaml["yolov5_color_order"]) {
+    color_order = yaml["yolov5_color_order"].as<std::string>();
+  }
+  if (color_order == "red_blue_gray_purple") {
+    swap_red_blue_ = false;
+  } else if (color_order == "blue_red_gray_purple") {
+    swap_red_blue_ = true;
+  } else {
+    throw std::invalid_argument("Unsupported yolov5_color_order: " + color_order);
+  }
   roi_ = cv::Rect(x, y, width, height);
   offset_ = cv::Point2f(x, y);
 
@@ -161,11 +173,14 @@ std::list<Armor> YOLOV5::parse(
 
   std::list<Armor> armors;
   for (const auto & i : indices) {
+    auto color_id = color_ids[i];
+    if (swap_red_blue_ && color_id <= 1) color_id = 1 - color_id;
+
     if (use_roi_) {
       armors.emplace_back(
-        color_ids[i], num_ids[i], confidences[i], boxes[i], armors_key_points[i], offset_);
+        color_id, num_ids[i], confidences[i], boxes[i], armors_key_points[i], offset_);
     } else {
-      armors.emplace_back(color_ids[i], num_ids[i], confidences[i], boxes[i], armors_key_points[i]);
+      armors.emplace_back(color_id, num_ids[i], confidences[i], boxes[i], armors_key_points[i]);
     }
   }
 

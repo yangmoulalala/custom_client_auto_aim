@@ -398,10 +398,11 @@ t_camera2gimbal:  [tx, ty, tz]
 
 ### 7.4 自瞄与火控参数
 
-YOLOV5、Tracker、Aimer 和 Shooter 参数沿用项目原有 UAV 自瞄链路。默认检测模型为 `RobotDetectionModel/Model/0526.onnx`，输入为 640x640，并按 `RobotDetectionModel/README.md` 中的关键点、颜色与数字顺序解析。`device: AUTO` 会由 OpenVINO 选择可用设备。`enemy_color` 仍是 Tracker 构造所需的初始值，但 `auv_client` 在处理首帧前会使用 `ros_self_is_red_topic` 的值覆盖它；不得把该 YAML 项当作 AUV 运行时阵营来源。与外部控制接口直接相关的参数包括：
+YOLOV5、Tracker、Aimer 和 Shooter 参数沿用项目原有 UAV 自瞄链路。默认检测模型为 `RobotDetectionModel/Model/0526.onnx`，输入为 640x640。该模型实测颜色输出顺序为蓝、红、灰、紫，因此 AUV 配置使用 `yolov5_color_order: blue_red_gray_purple`；未配置时保持原有的红、蓝、灰、紫顺序，避免影响其他 YOLOV5 模型。`device: AUTO` 会由 OpenVINO 选择可用设备。`enemy_color` 仍是 Tracker 构造所需的初始值，但 `auv_client` 在处理首帧前会使用 `ros_self_is_red_topic` 的值覆盖它；不得把该 YAML 项当作 AUV 运行时阵营来源。相关参数包括：
 
 | 配置项 | 单位 | 说明 |
 |---|---|---|
+| `yolov5_color_order` | — | YOLOV5 颜色输出顺序；支持 `red_blue_gray_purple` 和 `blue_red_gray_purple` |
 | `yaw_offset` | degree | yaw 固定补偿 |
 | `pitch_offset` | degree | pitch/弹道固定补偿 |
 | `high_speed_delay_time` | s | 高转速目标附加预测时间 |
