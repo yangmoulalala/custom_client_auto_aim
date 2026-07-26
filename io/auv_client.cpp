@@ -6,8 +6,7 @@
 #include <cmath>
 #include <limits>
 #include <nlohmann/json.hpp>
-#include <opencv2/imgproc.hpp>
-#include <sensor_msgs/image_encodings.hpp>
+#include <opencv2/imgcodecs.hpp>
 #include <stdexcept>
 
 namespace io
@@ -184,43 +183,22 @@ bool AUVClient::has_matching_imu_locked(std::int64_t image_stamp_ns) const
 
 AUVReadStatus AUVClient::convert_image(const ImageMsg::ConstSharedPtr & msg, AUVFrame & frame) const
 {
-  if (!msg || msg->width == 0 || msg->height == 0) return AUVReadStatus::invalid_image;
+  if (!msg || msg->data.empty()) return AUVReadStatus::invalid_image;
 
-  int cv_type = 0;
-  std::size_t bytes_per_pixel = 0;
-  if (
-    msg->encoding == sensor_msgs::image_encodings::BGR8 ||
-    msg->encoding == sensor_msgs::image_encodings::RGB8) {
-    cv_type = CV_8UC3;
-    bytes_per_pixel = 3;
-  } else if (msg->encoding == sensor_msgs::image_encodings::MONO8) {
-    cv_type = CV_8UC1;
-    bytes_per_pixel = 1;
-  } else {
+  try {
+    frame.image = cv::imdecode(msg->data, cv::IMREAD_COLOR);
+  } catch (const cv::Exception & e) {
     RCLCPP_WARN_THROTTLE(
-      node_->get_logger(), *node_->get_clock(), 1000, "Unsupported image encoding: %s",
-      msg->encoding.c_str());
+      node_->get_logger(), *node_->get_clock(), 1000, "Failed to decode compressed image: %s",
+      e.what());
     return AUVReadStatus::invalid_image;
   }
 
-  const auto minimum_step = static_cast<std::size_t>(msg->width) * bytes_per_pixel;
-  const auto required_size = static_cast<std::size_t>(msg->step) * msg->height;
-  if (msg->step < minimum_step || msg->data.size() < required_size) {
+  if (frame.image.empty()) {
     RCLCPP_WARN_THROTTLE(
-      node_->get_logger(), *node_->get_clock(), 1000, "Invalid Image step or data size");
+      node_->get_logger(), *node_->get_clock(), 1000,
+      "Compressed image payload could not be decoded (format: %s)", msg->format.c_str());
     return AUVReadStatus::invalid_image;
-  }
-
-  cv::Mat source(
-    static_cast<int>(msg->height), static_cast<int>(msg->width), cv_type,
-    const_cast<std::uint8_t *>(msg->data.data()), static_cast<std::size_t>(msg->step));
-
-  if (msg->encoding == sensor_msgs::image_encodings::BGR8) {
-    frame.image = source;
-  } else if (msg->encoding == sensor_msgs::image_encodings::RGB8) {
-    cv::cvtColor(source, frame.image, cv::COLOR_RGB2BGR);
-  } else {
-    cv::cvtColor(source, frame.image, cv::COLOR_GRAY2BGR);
   }
   return AUVReadStatus::ok;
 }
@@ -251,7 +229,6 @@ AUVReadStatus AUVClient::read(AUVFrame & frame)
   frame.timestamp = std::chrono::steady_clock::time_point{};
   frame.source_stamp.sec = 0;
   frame.source_stamp.nanosec = 0;
-  frame.image_owner.reset();
   ImageMsg::ConstSharedPtr image_msg;
   ImuMsg::ConstSharedPtr imu_msg;
 
@@ -265,7 +242,6 @@ AUVReadStatus AUVClient::read(AUVFrame & frame)
 
     image_msg = latest_image_;
     consumed_image_sequence_ = latest_image_sequence_;
-    frame.image_owner = image_msg;
     frame.source_stamp = image_msg->header.stamp;
 
     const auto image_stamp_ns = stamp_to_ns(image_msg->header.stamp);

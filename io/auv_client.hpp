@@ -13,7 +13,7 @@
 #include <optional>
 #include <rclcpp/executors/single_threaded_executor.hpp>
 #include <rclcpp/rclcpp.hpp>
-#include <sensor_msgs/msg/image.hpp>
+#include <sensor_msgs/msg/compressed_image.hpp>
 #include <sensor_msgs/msg/imu.hpp>
 #include <std_msgs/msg/bool.hpp>
 #include <std_msgs/msg/string.hpp>
@@ -30,9 +30,6 @@ struct AUVFrame
   Eigen::Quaterniond orientation{Eigen::Quaterniond::Identity()};
   std::chrono::steady_clock::time_point timestamp;
   builtin_interfaces::msg::Time source_stamp;
-
-  // Keep the ROS message alive while image references its data without copying.
-  sensor_msgs::msg::Image::ConstSharedPtr image_owner;
 };
 
 enum class AUVReadStatus
@@ -69,7 +66,7 @@ public:
   std::optional<AUVTeamColor> team_color() const;
 
 private:
-  using ImageMsg = sensor_msgs::msg::Image;
+  using ImageMsg = sensor_msgs::msg::CompressedImage;
   using ImuMsg = sensor_msgs::msg::Imu;
   using BoolMsg = std_msgs::msg::Bool;
 

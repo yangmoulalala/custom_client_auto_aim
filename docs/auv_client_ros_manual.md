@@ -7,8 +7,8 @@
 `auv_client` 用 ROS 2 标准消息替代项目原有的工业相机和 CBoard 输入，始终运行自瞄链路，不包含 CBoard 模式切换和打符分支。
 
 ```text
-sensor_msgs/Image ─┐
-sensor_msgs/Imu ───┼─ 时间戳配对 → Detector → 敌方颜色过滤 → Solver → Tracker → Aimer → Shooter
+sensor_msgs/CompressedImage ─┐
+sensor_msgs/Imu ───┼─ 时间戳配对 → YOLOV5 → 敌方颜色过滤 → Solver → Tracker → Aimer → Shooter
 std_msgs/Bool ─────┘                                                               │
                                                                                    ▼
                                                                  std_msgs/String（JSON）
@@ -63,7 +63,7 @@ ROS2 standard messages found, compiling AUV client I/O.
 
 | 方向 | 当前配置话题 | ROS 类型 | QoS |
 |---|---|---|---|
-| 输入 | `/rm_video/image_processed` | `sensor_msgs/msg/Image` | best effort、volatile、keep last 1 |
+| 输入 | `/rm_video/image_processed` | `sensor_msgs/msg/CompressedImage` | best effort、volatile、keep last 1 |
 | 输入 | `/custom_client/imu` | `sensor_msgs/msg/Imu` | best effort、volatile、keep last 1 |
 | 输入 | `/custom_client/self_is_red` | `std_msgs/msg/Bool` | best effort、volatile、keep last 1 |
 | 输出 | `/auto_aim/result` | `std_msgs/msg/String` | best effort、volatile、keep last 1 |
@@ -83,29 +83,20 @@ ros_result_topic: "/auto_aim/result"
 
 ### 3.2 图像输入
 
-消息类型为 `sensor_msgs/msg/Image`。使用字段如下：
+消息类型为 `sensor_msgs/msg/CompressedImage`。使用字段如下：
 
 | 字段 | 要求 |
 |---|---|
 | `header.stamp` | 与 IMU 共用同一 ROS 时钟，表示上游完成对齐后的发布时间 |
 | `header.frame_id` | 当前版本不读取，不触发 TF 查询 |
-| `height`、`width` | 必须大于 0，运行期间必须保持不变 |
-| `encoding` | 仅支持 `bgr8`、`rgb8`、`mono8` |
-| `step` | 不得小于 `width × 每像素字节数` |
-| `data` | 大小不得小于 `step × height` |
+| `format` | 用于解码失败日志；不参与时间同步 |
+| `data` | 必须包含 OpenCV 可解码的完整压缩图像载荷 |
 
-编码处理方式：
+`auv_client` 使用 OpenCV `imdecode(..., IMREAD_COLOR)` 解码，实际支持的 JPEG、PNG
+等格式取决于 OpenCV 构建。解码结果统一为三通道 BGR；空载荷、损坏载荷或当前 OpenCV
+不支持的压缩格式会被拒绝，并输出安全结果。
 
-| 编码 | 处理 |
-|---|---|
-| `bgr8` | 直接在 ROS 消息缓冲区上建立 OpenCV 视图，不复制像素数据 |
-| `rgb8` | 转换为 BGR |
-| `mono8` | 扩展为三通道 BGR |
-| 其他编码 | 拒绝该帧并输出安全结果 |
-
-在 `bgr8` 零拷贝路径中，程序会一直持有原 ROS 消息的所有权，直至该帧处理完成；发布端仍不得在发布后修改消息内存。
-
-首个有效图像决定本次运行的固定输入分辨率。实际输入可以与内参标定分辨率不同，但宽高比相对误差必须不超过 1%，此时程序按宽、高分别缩放 `fx`、`fy`、`cx`、`cy`，畸变参数保持不变。运行中改变图像分辨率会拒绝该帧并发布安全结果，不会跨分辨率延续 Tracker 状态。
+首个成功解码的图像决定本次运行的固定输入分辨率。实际输入可以与内参标定分辨率不同，但宽高比相对误差必须不超过 1%，此时程序按宽、高分别缩放 `fx`、`fy`、`cx`、`cy`，畸变参数保持不变。运行中改变解码后图像的分辨率会拒绝该帧并发布安全结果，不会跨分辨率延续 Tracker 状态。
 
 ### 3.3 IMU 输入
 
@@ -407,7 +398,7 @@ t_camera2gimbal:  [tx, ty, tz]
 
 ### 7.4 自瞄与火控参数
 
-Detector、Tracker、Aimer 和 Shooter 参数沿用项目原有 UAV 自瞄链路。`enemy_color` 仍是 Tracker 构造所需的初始值，但 `auv_client` 在处理首帧前会使用 `ros_self_is_red_topic` 的值覆盖它；不得把该 YAML 项当作 AUV 运行时阵营来源。与外部控制接口直接相关的参数包括：
+YOLOV5、Tracker、Aimer 和 Shooter 参数沿用项目原有 UAV 自瞄链路。默认检测模型为 `RobotDetectionModel/Model/0526.onnx`，输入为 640x640，并按 `RobotDetectionModel/README.md` 中的关键点、颜色与数字顺序解析。`device: AUTO` 会由 OpenVINO 选择可用设备。`enemy_color` 仍是 Tracker 构造所需的初始值，但 `auv_client` 在处理首帧前会使用 `ros_self_is_red_topic` 的值覆盖它；不得把该 YAML 项当作 AUV 运行时阵营来源。与外部控制接口直接相关的参数包括：
 
 | 配置项 | 单位 | 说明 |
 |---|---|---|
@@ -491,7 +482,7 @@ ros_imu_topic: "/custom_client/imu"
 
 - 两条消息使用同一 ROS 时钟和一致的 `header.stamp` 语义。
 - 上游已经完成“某帧图像对应哪个姿态”的时间对齐。
-- 图像保持固定分辨率，并使用 `bgr8`、`rgb8` 或 `mono8`。
+- 发布有效的 `sensor_msgs/msg/CompressedImage`，并保持解码后图像分辨率固定。
 - IMU 发布 body 到 absolute/world 的有效、有限、非零四元数。
 - 阵营发布端在 `auv_client` 启动后发布至少一条当前 `self_is_red` 状态，并在阵营变化时及时更新。
 - 采用与 best-effort 传感器订阅兼容的 QoS，建议 depth 1。
@@ -532,7 +523,7 @@ ros2 topic echo --qos-reliability best_effort /auto_aim/result
 ```
 
 汇总包含六种输入读取状态、有效帧序号与延迟、IMU yaw/pitch/roll、装甲板数、
-Tracker 状态、目标数以及最终控制命令。需要查看二值图、灯条和装甲板标注时使用：
+Tracker 状态、目标数以及最终控制命令。需要查看 YOLO 关键点和装甲板标注时使用：
 
 ```bash
 ./build/auv_client configs/AUVClient.yaml --debug --show
@@ -554,7 +545,7 @@ ros2 topic echo --qos-reliability best_effort /custom_client/imu --field header
 | 启动立即退出 | 标定宽高为 0、YAML 缺字段或时间参数非法 | 写入真实标定尺寸并检查 `configs/AUVClient.yaml` |
 | 一直输出 `control=false` | 未收到阵营、无目标、图像非法、IMU 无效、配对失败或帧过期 | 查看日志，并分别 echo 三个输入话题 |
 | 日志一直等待己方阵营 | Bool 发布端未重发、话题名错误或 QoS 不兼容 | 以 best-effort QoS 检查 `/custom_client/self_is_red`，确保发布端在客户端启动后发送当前值 |
-| 图像有数据但节点拒绝 | 编码、`step/data`、宽高比或运行时尺寸不符合约定 | 改为受支持编码并固定分辨率 |
+| 图像有数据但节点拒绝 | 压缩载荷损坏、OpenCV 不支持该压缩格式、宽高比或运行时尺寸不符合约定 | 使用 JPEG/PNG 等可解码格式并固定解码分辨率 |
 | 经常提示 IMU 无法匹配 | 两路时钟/时间戳语义不一致或容差过小 | 修正上游对齐，测量时间差后谨慎调整同步参数 |
 | 提示图像过期 | ROS 时钟不同步、处理堵塞或上游延迟未配置合理 | 统一时钟，降低队列深度，检查 `upstream_latency_ms` 和帧率 |
 | yaw/pitch 方向错误 | IMU 四元数方向、NED/ENU 或外参轴向错误 | 按第 6 节逐级验证 `R_gimbal2imubody` 和 `R_camera2gimbal` |

@@ -6,6 +6,24 @@
 
 namespace auto_aim
 {
+namespace
+{
+void set_yolov5_classification(Armor & armor, int color_id, int num_id)
+{
+  armor.class_id = num_id;
+  armor.color = color_id == 0   ? Color::red
+                : color_id == 1 ? Color::blue
+                : color_id == 2 ? Color::extinguish
+                                : Color::purple;
+  armor.name = num_id == 0   ? ArmorName::sentry
+               : num_id <= 5 ? ArmorName(num_id - 1)
+               : num_id == 6 ? ArmorName::outpost
+               : num_id <= 8 ? ArmorName::base
+                             : ArmorName::not_armor;
+  armor.type = (num_id == 1 || num_id == 8) ? ArmorType::big : ArmorType::small;
+}
+}  // namespace
+
 Lightbar::Lightbar(const cv::RotatedRect & rotated_rect, std::size_t id)
 : id(id), rotated_rect(rotated_rect)
 {
@@ -172,11 +190,7 @@ Armor::Armor(
   rectangular_error = std::max(left_rectangular_error, right_rectangular_error);
 
   ratio = max_length / max_width;
-  color = color_id == 0 ? Color::blue : color_id == 1 ? Color::red : Color::extinguish;
-  name = num_id == 0  ? ArmorName::sentry
-         : num_id > 5 ? ArmorName(num_id)
-                      : ArmorName(num_id - 1);  //TODO 考虑Bb
-  type = num_id == 1 ? ArmorType::big : ArmorType::small;
+  set_yolov5_classification(*this, color_id, num_id);
 }
 
 // YOLOV5+ROI构造函数
@@ -213,9 +227,7 @@ Armor::Armor(
   rectangular_error = std::max(left_rectangular_error, right_rectangular_error);
 
   ratio = max_length / max_width;
-  color = color_id == 0 ? Color::blue : color_id == 1 ? Color::red : Color::extinguish;
-  name = num_id == 0 ? ArmorName::sentry : num_id > 5 ? ArmorName(num_id) : ArmorName(num_id - 1);
-  type = num_id == 1 ? ArmorType::big : ArmorType::small;
+  set_yolov5_classification(*this, color_id, num_id);
 }
 
 }  // namespace auto_aim

@@ -11,17 +11,17 @@
 #include <string>
 
 #include "tasks/auto_aim/aimer.hpp"
-#include "tasks/auto_aim/detector.hpp"
 #include "tasks/auto_aim/shooter.hpp"
 #include "tasks/auto_aim/solver.hpp"
 #include "tasks/auto_aim/tracker.hpp"
+#include "tasks/auto_aim/yolo.hpp"
 #include "tools/logger.hpp"
 #include "tools/math_tools.hpp"
 
 const std::string keys =
   "{help h usage ? |                        | 输出命令行参数说明}"
   "{debug d        | false                  | 每秒输出输入、识别、跟踪和控制调试数据}"
-  "{show           | false                  | 显示二值图和装甲板检测结果，按q退出}"
+  "{show           | false                  | 显示YOLO装甲板检测结果，按q退出}"
   "{@config-path   | configs/AUVClient.yaml | YAML配置文件路径}";
 
 namespace
@@ -79,7 +79,7 @@ int main(int argc, char * argv[])
 
   try {
     io::AUVClient client(config_path);
-    auto_aim::Detector detector(config_path, show);
+    auto_aim::YOLO detector(config_path, show);
     auto_aim::Solver solver(config_path);
     auto_aim::Tracker tracker(config_path, solver);
     auto_aim::Aimer aimer(config_path);

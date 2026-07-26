@@ -7,8 +7,8 @@
 #include <nlohmann/json.hpp>
 #include <optional>
 #include <rclcpp/rclcpp.hpp>
-#include <sensor_msgs/image_encodings.hpp>
-#include <sensor_msgs/msg/image.hpp>
+#include <opencv2/imgcodecs.hpp>
+#include <sensor_msgs/msg/compressed_image.hpp>
 #include <sensor_msgs/msg/imu.hpp>
 #include <std_msgs/msg/bool.hpp>
 #include <std_msgs/msg/string.hpp>
@@ -22,7 +22,7 @@ using namespace std::chrono_literals;
 namespace
 {
 bool wait_for_graph(
-  const rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr & image_publisher,
+  const rclcpp::Publisher<sensor_msgs::msg::CompressedImage>::SharedPtr & image_publisher,
   const rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr & imu_publisher,
   const rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr & self_is_red_publisher,
   const rclcpp::Subscription<std_msgs::msg::String>::SharedPtr & result_subscription)
@@ -56,22 +56,17 @@ std::optional<io::AUVTeamColor> wait_for_team_color(
   return std::nullopt;
 }
 
-sensor_msgs::msg::Image make_image(
-  const builtin_interfaces::msg::Time & stamp,
-  const std::string & encoding = sensor_msgs::image_encodings::BGR8, std::uint8_t seed = 0)
+sensor_msgs::msg::CompressedImage make_image(
+  const builtin_interfaces::msg::Time & stamp, int cv_type = CV_8UC3, std::uint8_t seed = 0)
 {
-  sensor_msgs::msg::Image image;
+  sensor_msgs::msg::CompressedImage image;
   image.header.stamp = stamp;
-  image.height = 2;
-  image.width = 4;
-  image.encoding = encoding;
-  image.is_bigendian = false;
-  const auto channels = encoding == sensor_msgs::image_encodings::MONO8 ? 1U : 3U;
-  image.step = image.width * channels;
-  image.data.resize(image.step * image.height);
-  for (std::size_t i = 0; i < image.data.size(); ++i) {
-    image.data[i] = static_cast<std::uint8_t>(seed + i);
+  image.format = "png";
+  cv::Mat source(2, 4, cv_type);
+  for (std::size_t i = 0; i < source.total() * source.elemSize(); ++i) {
+    source.data[i] = static_cast<std::uint8_t>(seed + i);
   }
+  cv::imencode(".png", source, image.data);
   return image;
 }
 
@@ -108,8 +103,8 @@ int main(int argc, char ** argv)
     io::AUVClient client(AUV_CLIENT_TEST_CONFIG);
     auto helper_node = std::make_shared<rclcpp::Node>("auv_client_io_test");
     auto sensor_qos = rclcpp::SensorDataQoS().keep_last(1).best_effort();
-    auto image_publisher =
-      helper_node->create_publisher<sensor_msgs::msg::Image>("/camera/image_raw", sensor_qos);
+    auto image_publisher = helper_node->create_publisher<sensor_msgs::msg::CompressedImage>(
+      "/camera/image_raw", sensor_qos);
     auto imu_publisher =
       helper_node->create_publisher<sensor_msgs::msg::Imu>("/imu/data", sensor_qos);
     auto self_is_red_publisher = helper_node->create_publisher<std_msgs::msg::Bool>(
@@ -162,11 +157,8 @@ int main(int argc, char ** argv)
     io::AUVFrame frame;
     auto status = client.read(frame);
     check(status == io::AUVReadStatus::ok, "exact timestamp pair should be accepted");
-    check(frame.image.cols == 4 && frame.image.rows == 2, "BGR image dimensions should be kept");
-    check(frame.image.type() == CV_8UC3, "BGR image type should be CV_8UC3");
-    check(
-      frame.image_owner && frame.image.data == frame.image_owner->data.data(),
-      "BGR image should reference the received ROS message without another full-frame copy");
+    check(frame.image.cols == 4 && frame.image.rows == 2, "decoded image dimensions should be kept");
+    check(frame.image.type() == CV_8UC3, "decoded image type should be CV_8UC3");
     check(std::abs(frame.orientation.w() - 1.0) < 1e-12, "IMU quaternion should be normalized");
     const auto compensated_age_ms =
       std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - frame.timestamp)
@@ -202,36 +194,46 @@ int main(int argc, char ** argv)
     check(status == io::AUVReadStatus::stale, "150 ms old image should be rejected");
 
     std::this_thread::sleep_for(10ms);
-    const auto rgb_stamp = to_msg(helper_node->now());
-    imu_publisher->publish(make_imu(rgb_stamp));
-    image_publisher->publish(make_image(rgb_stamp, sensor_msgs::image_encodings::RGB8, 10));
+    const auto color_stamp = to_msg(helper_node->now());
+    imu_publisher->publish(make_imu(color_stamp));
+    image_publisher->publish(make_image(color_stamp, CV_8UC3, 10));
     status = client.read(frame);
-    check(status == io::AUVReadStatus::ok, "RGB8 image should be accepted");
+    check(status == io::AUVReadStatus::ok, "compressed color image should be accepted");
     if (status == io::AUVReadStatus::ok) {
       const auto pixel = frame.image.at<cv::Vec3b>(0, 0);
-      check(pixel == cv::Vec3b(12, 11, 10), "RGB8 image should be converted to BGR");
+      check(pixel == cv::Vec3b(10, 11, 12), "compressed color values should be decoded as BGR");
     }
 
     std::this_thread::sleep_for(10ms);
     const auto mono_stamp = to_msg(helper_node->now());
     imu_publisher->publish(make_imu(mono_stamp));
-    image_publisher->publish(make_image(mono_stamp, sensor_msgs::image_encodings::MONO8, 20));
+    image_publisher->publish(make_image(mono_stamp, CV_8UC1, 20));
     status = client.read(frame);
-    check(status == io::AUVReadStatus::ok, "MONO8 image should be accepted");
+    check(status == io::AUVReadStatus::ok, "compressed monochrome image should be accepted");
     if (status == io::AUVReadStatus::ok) {
       check(
         frame.image.at<cv::Vec3b>(0, 0) == cv::Vec3b(20, 20, 20),
-        "MONO8 image should be expanded to BGR");
+        "compressed monochrome image should be expanded to BGR");
     }
+
+    std::this_thread::sleep_for(10ms);
+    const auto invalid_image_stamp = to_msg(helper_node->now());
+    auto invalid_image = make_image(invalid_image_stamp);
+    invalid_image.format = "jpeg";
+    invalid_image.data = {0x01, 0x02, 0x03};
+    imu_publisher->publish(make_imu(invalid_image_stamp));
+    image_publisher->publish(invalid_image);
+    status = client.read(frame);
+    check(status == io::AUVReadStatus::invalid_image, "corrupt compressed image should be rejected");
 
     std::this_thread::sleep_for(10ms);
     const auto older_stamp = to_msg(helper_node->now());
     const auto newer_stamp =
       to_msg(rclcpp::Time(older_stamp) + rclcpp::Duration::from_nanoseconds(1000000));
     imu_publisher->publish(make_imu(older_stamp));
-    image_publisher->publish(make_image(older_stamp, sensor_msgs::image_encodings::BGR8, 30));
+    image_publisher->publish(make_image(older_stamp, CV_8UC3, 30));
     imu_publisher->publish(make_imu(newer_stamp));
-    image_publisher->publish(make_image(newer_stamp, sensor_msgs::image_encodings::BGR8, 40));
+    image_publisher->publish(make_image(newer_stamp, CV_8UC3, 40));
     std::this_thread::sleep_for(10ms);
     status = client.read(frame);
     check(status == io::AUVReadStatus::ok, "latest queued image should be readable");

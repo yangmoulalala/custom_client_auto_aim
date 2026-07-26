@@ -103,6 +103,18 @@ if(TARGET auv_io)
 endif()
 
 ##################tests##################
+if(BUILD_TESTING)
+    add_executable(yolov5_model_test tests/yolov5_model_test.cpp)
+    target_compile_definitions(
+        yolov5_model_test PRIVATE
+        AUV_CLIENT_CONFIG="${PROJECT_SOURCE_DIR}/configs/AUVClient.yaml")
+    target_link_libraries(
+        yolov5_model_test ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim tools io)
+    add_test(NAME yolov5_model_test COMMAND yolov5_model_test)
+    set_tests_properties(
+        yolov5_model_test PROPERTIES TIMEOUT 30 WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
+endif()
+
 add_executable(auto_aim_test tests/auto_aim_test.cpp)
 add_executable(auto_buff_test tests/auto_buff_test.cpp)
 add_executable(camera_detect_test tests/camera_detect_test.cpp)
