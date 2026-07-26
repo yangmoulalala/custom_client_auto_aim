@@ -18,9 +18,12 @@ while [[ ! "${client_id}" =~ ^[1-9][0-9]*$ ]]; do
     fi
 done
 
-# 默认使用 Jazzy，也可在执行脚本前通过 ROS_DISTRO 指定其他版本。
-ros_distro="${ROS_DISTRO:-jazzy}"
-source "/opt/ros/${ros_distro}/setup.bash"
+# ROS 2 发行版由调用环境显式指定。
+if [[ -z "${ROS_DISTRO:-}" ]]; then
+    echo "Error: ROS_DISTRO must be set before running start.sh." >&2
+    exit 1
+fi
+source "/opt/ros/${ROS_DISTRO}/setup.bash"
 
 # 先完成自瞄和适配器的编译，任一步失败都不会启动节点。
 cmake -S auto_aim -B build/auto_aim -DCMAKE_BUILD_TYPE=Release

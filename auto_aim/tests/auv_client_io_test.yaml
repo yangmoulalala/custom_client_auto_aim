@@ -2,6 +2,7 @@ ros_image_topic: "/camera/image_raw"
 ros_imu_topic: "/imu/data"
 ros_self_is_red_topic: "/auv_client_test/self_is_red"
 ros_result_topic: "/auto_aim/result"
+ros_debug_topic: "/auto_aim/debug"
 bullet_speed: 23.0
 upstream_latency_ms: 20.0
 sync_tolerance_ms: 5

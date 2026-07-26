@@ -26,13 +26,11 @@
 const std::string keys =
   "{help h usage ? |                        | 输出命令行参数说明}"
   "{debug d        | false                  | 每秒输出输入、识别、跟踪和控制调试数据}"
-  "{show           | false                  | 显示检测、EKF预测和瞄准结果，按q退出}"
   "{@config-path   | auto_aim/configs/AUVClient.yaml | YAML配置文件路径}";
 
 namespace
 {
 constexpr std::size_t READ_STATUS_COUNT = 6;
-constexpr char DEBUG_WINDOW_NAME[] = "AUV auto aim";
 const cv::Scalar DETECTION_COLOR{0, 220, 0};
 const cv::Scalar EKF_COLOR{255, 255, 0};
 const cv::Scalar AIM_COLOR{0, 0, 255};
@@ -191,12 +189,6 @@ cv::Mat make_debug_image(
   return debug_image;
 }
 
-void initialize_debug_window(const cv::Size & image_size)
-{
-  cv::namedWindow(DEBUG_WINDOW_NAME, cv::WINDOW_NORMAL | cv::WINDOW_KEEPRATIO);
-  cv::resizeWindow(DEBUG_WINDOW_NAME, image_size.width, image_size.height);
-}
-
 const char * read_status_name(io::AUVReadStatus status)
 {
   switch (status) {
@@ -222,7 +214,6 @@ int main(int argc, char * argv[])
   cv::CommandLineParser cli(argc, argv, keys);
   const auto config_path = cli.get<std::string>("@config-path");
   const auto debug = cli.get<bool>("debug");
-  const auto show = cli.get<bool>("show");
   if (cli.has("help") || config_path.empty()) {
     cli.printMessage();
     return 0;
@@ -322,7 +313,6 @@ int main(int argc, char * argv[])
           break;
         }
         input_size = frame.image.size();
-        if (show) initialize_debug_window(input_size);
         RCLCPP_INFO(
           logger, "Using fixed input resolution %dx%d", input_size.width, input_size.height);
       } else if (frame.image.size() != input_size) {
@@ -341,13 +331,16 @@ int main(int argc, char * argv[])
       solver.set_R_gimbal2world(frame.orientation);
       const Eigen::Vector3d gimbal_ypr = tools::eulers(solver.R_gimbal2world(), 2, 1, 0);
       auto armors = detector.detect(frame.image);
-      std::list<auto_aim::Armor> detections;
-      if (show) detections = armors;
+      const auto detections = armors;
       auto targets = tracker.track(armors, frame.timestamp);
       auto command = aimer.aim(targets, frame.timestamp, client.bullet_speed(), true);
       command.shoot = shooter.shoot(command, aimer, targets, gimbal_ypr);
       client.publish(command, &frame, team_color->revision);
       ++frame_count;
+      client.publish_debug(
+        make_debug_image(
+          frame.image, detections, targets, aimer, solver, command, tracker.state(), frame_count),
+        frame.source_stamp);
 
       const auto now = std::chrono::steady_clock::now();
       if (debug && tools::delta_time(now, last_debug_report) >= 1.0) {
@@ -370,14 +363,6 @@ int main(int argc, char * argv[])
             .c_str());
         read_status_counts.fill(0);
         last_debug_report = now;
-      }
-
-      if (show) {
-        const auto debug_image = make_debug_image(
-          frame.image, detections, targets, aimer, solver, command, tracker.state(), frame_count);
-        cv::imshow(DEBUG_WINDOW_NAME, debug_image);
-        const int key = cv::waitKey(1) & 0xff;
-        if (key == 'q' || key == 'Q' || key == 27) break;
       }
     }
   } catch (const std::exception & e) {

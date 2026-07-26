@@ -8,6 +8,7 @@
 #include <nlohmann/json.hpp>
 #include <opencv2/imgcodecs.hpp>
 #include <stdexcept>
+#include <vector>
 
 namespace io
 {
@@ -47,6 +48,8 @@ AUVClient::AUVClient(const std::string & config_path)
   const auto imu_topic = yaml_value_or<std::string>(yaml, "ros_imu_topic", "/imu/data");
   const auto result_topic =
     yaml_value_or<std::string>(yaml, "ros_result_topic", "/auto_aim/result");
+  const auto debug_topic =
+    yaml_value_or<std::string>(yaml, "ros_debug_topic", "/auto_aim/debug");
   const auto self_is_red_topic =
     yaml_value_or<std::string>(yaml, "ros_self_is_red_topic", "/rm_mqtt/self_is_red");
 
@@ -83,6 +86,7 @@ AUVClient::AUVClient(const std::string & config_path)
 
   result_publisher_ =
     node_->create_publisher<std_msgs::msg::String>(result_topic, rclcpp::QoS(1).best_effort());
+  debug_publisher_ = node_->create_publisher<ImageMsg>(debug_topic, sensor_qos);
 
   const auto watchdog_period_ms = std::max(10.0, command_timeout_ms_ / 2.0);
   watchdog_timer_ = node_->create_wall_timer(
@@ -92,11 +96,26 @@ AUVClient::AUVClient(const std::string & config_path)
 
   last_result_steady_ns_ = steady_now_ns();
   executor_.add_node(node_);
-  spin_thread_ = std::thread([this]() { executor_.spin(); });
+  try {
+    spin_thread_ = std::thread([this]() { executor_.spin(); });
+    debug_thread_ = std::thread([this]() { debug_worker(); });
+  } catch (...) {
+    {
+      std::lock_guard<std::mutex> lock(debug_mutex_);
+      debug_stopping_ = true;
+    }
+    debug_condition_.notify_all();
+    if (debug_thread_.joinable()) debug_thread_.join();
+    executor_.cancel();
+    if (spin_thread_.joinable()) spin_thread_.join();
+    executor_.remove_node(node_);
+    throw;
+  }
 
   RCLCPP_INFO(
-    auto_aim_logger(), "Started: image=%s imu=%s self_is_red=%s result=%s", image_topic.c_str(),
-    imu_topic.c_str(), self_is_red_topic.c_str(), result_topic.c_str());
+    auto_aim_logger(), "Started: image=%s imu=%s self_is_red=%s result=%s debug=%s",
+    image_topic.c_str(), imu_topic.c_str(), self_is_red_topic.c_str(), result_topic.c_str(),
+    debug_topic.c_str());
 }
 
 AUVClient::~AUVClient()
@@ -106,6 +125,14 @@ AUVClient::~AUVClient()
     stopping_ = true;
   }
   data_condition_.notify_all();
+
+  {
+    std::lock_guard<std::mutex> lock(debug_mutex_);
+    debug_stopping_ = true;
+    pending_debug_frame_.reset();
+  }
+  debug_condition_.notify_all();
+  if (debug_thread_.joinable()) debug_thread_.join();
 
   if (watchdog_timer_) watchdog_timer_->cancel();
   executor_.cancel();
@@ -342,6 +369,48 @@ void AUVClient::publish(
   }
   last_result_steady_ns_ = steady_now_ns();
   watchdog_result_sent_ = false;
+}
+
+void AUVClient::publish_debug(
+  cv::Mat image, const builtin_interfaces::msg::Time & source_stamp)
+{
+  if (image.empty()) return;
+
+  {
+    std::lock_guard<std::mutex> lock(debug_mutex_);
+    if (debug_stopping_) return;
+    pending_debug_frame_ = DebugFrame{std::move(image), source_stamp};
+  }
+  debug_condition_.notify_one();
+}
+
+void AUVClient::debug_worker()
+{
+  while (true) {
+    DebugFrame frame;
+    {
+      std::unique_lock<std::mutex> lock(debug_mutex_);
+      debug_condition_.wait(
+        lock, [this]() { return debug_stopping_ || pending_debug_frame_.has_value(); });
+      if (debug_stopping_) return;
+      frame = std::move(*pending_debug_frame_);
+      pending_debug_frame_.reset();
+    }
+
+    ImageMsg message;
+    message.header.stamp = frame.source_stamp;
+    message.format = "bgr8; jpeg compressed bgr8";
+    try {
+      static const std::vector<int> parameters{cv::IMWRITE_JPEG_QUALITY, 80};
+      if (cv::imencode(".jpg", frame.image, message.data, parameters)) {
+        debug_publisher_->publish(std::move(message));
+      }
+    } catch (const cv::Exception & e) {
+      RCLCPP_WARN_THROTTLE(
+        auto_aim_logger(), *node_->get_clock(), 1000, "Failed to encode debug image: %s",
+        e.what());
+    }
+  }
 }
 
 void AUVClient::watchdog_callback()

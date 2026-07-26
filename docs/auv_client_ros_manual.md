@@ -63,9 +63,10 @@ ROS2 standard messages found, compiling AUV client I/O.
 
 | 方向 | 默认话题 | ROS 类型 | QoS |
 |---|---|---|---|
-| 输入 | `/camera/image_raw` | `sensor_msgs/msg/Image` | best effort、volatile、keep last 1 |
+| 输入 | `/camera/image_raw` | `sensor_msgs/msg/CompressedImage` | best effort、volatile、keep last 1 |
 | 输入 | `/imu/data` | `sensor_msgs/msg/Imu` | best effort、volatile、keep last 1 |
-| 输出 | `/auto_aim/result` | `std_msgs/msg/String` | reliable、volatile、keep last 1 |
+| 输出 | `/auto_aim/result` | `std_msgs/msg/String` | best effort、volatile、keep last 1 |
+| 输出 | `/auto_aim/debug` | `sensor_msgs/msg/CompressedImage` | best effort、volatile、keep last 1 |
 
 可在 YAML 中修改话题名：
 
@@ -73,33 +74,24 @@ ROS2 standard messages found, compiling AUV client I/O.
 ros_image_topic: "/camera/image_raw"
 ros_imu_topic: "/imu/data"
 ros_result_topic: "/auto_aim/result"
+ros_debug_topic: "/auto_aim/debug"
 ```
 
 发布端和 `auv_client` 预期位于同一主机。图像和 IMU 发布端应使用与订阅端兼容的传感器 QoS，并将队列深度设为 1。DDS 实现支持时，建议启用共享内存传输。
 
 ### 3.2 图像输入
 
-消息类型为 `sensor_msgs/msg/Image`。使用字段如下：
+消息类型为 `sensor_msgs/msg/CompressedImage`。使用字段如下：
 
 | 字段 | 要求 |
 |---|---|
 | `header.stamp` | 与 IMU 共用同一 ROS 时钟，表示上游完成对齐后的发布时间 |
 | `header.frame_id` | 当前版本不读取，不触发 TF 查询 |
-| `height`、`width` | 必须大于 0，运行期间必须保持不变 |
-| `encoding` | 仅支持 `bgr8`、`rgb8`、`mono8` |
-| `step` | 不得小于 `width × 每像素字节数` |
-| `data` | 大小不得小于 `step × height` |
+| `format` | 记录压缩格式；解码由 OpenCV 根据负载内容完成 |
+| `data` | 必须包含可解码的压缩图像负载 |
 
-编码处理方式：
-
-| 编码 | 处理 |
-|---|---|
-| `bgr8` | 直接在 ROS 消息缓冲区上建立 OpenCV 视图，不复制像素数据 |
-| `rgb8` | 转换为 BGR |
-| `mono8` | 扩展为三通道 BGR |
-| 其他编码 | 拒绝该帧并输出安全结果 |
-
-在 `bgr8` 零拷贝路径中，程序会一直持有原 ROS 消息的所有权，直至该帧处理完成；发布端仍不得在发布后修改消息内存。
+程序使用 OpenCV 将负载解码为三通道 BGR 图像。负载为空、损坏或无法解码时拒绝该帧并输出
+安全结果；单通道压缩图像会在解码时扩展为 BGR。
 
 首个有效图像决定本次运行的固定输入分辨率。实际输入可以与内参标定分辨率不同，但宽高比相对误差必须不超过 1%，此时程序按宽、高分别缩放 `fx`、`fy`、`cx`、`cy`，畸变参数保持不变。运行中改变图像分辨率会拒绝该帧并发布安全结果，不会跨分辨率延续 Tracker 状态。
 
@@ -117,6 +109,15 @@ ros_result_topic: "/auto_aim/result"
 ROS 消息中的四元数排列为 `x, y, z, w`。程序内部按 Eigen 的构造顺序 `w, x, y, z` 读入，并在使用前归一化。零四元数或模长过小的四元数无效。
 
 当前版本不使用 `tf2`，因此仅填写 `frame_id` 不能纠正 IMU 安装方向。安装轴向差异必须通过 `R_gimbal2imubody` 配置。
+
+### 3.4 调试图像输出
+
+`auv_client` 不创建本地 OpenCV 窗口。每个成功处理的输入帧都会生成包含检测框、EKF 模型、
+瞄准点和 Tracker 状态的 JPEG 调试图，并通过 `/auto_aim/debug` 发布。消息类型为
+`sensor_msgs/msg/CompressedImage`，其 `header.stamp` 与对应输入图像一致。
+
+JPEG 编码在独立线程执行，待编码槽位只保留最新一帧；编码速度低于处理速度时会覆盖旧调试帧，
+不会积压并影响控制链路。该话题始终启用，不受 `--debug` 日志参数控制。
 
 ## 4. 输出帧格式
 
@@ -353,6 +354,7 @@ pitch = -(ballistic_elevation + pitch_offset)
 | `ros_image_topic` | `/camera/image_raw` | — | 图像输入话题 |
 | `ros_imu_topic` | `/imu/data` | — | IMU 输入话题 |
 | `ros_result_topic` | `/auto_aim/result` | — | JSON 结果输出话题 |
+| `ros_debug_topic` | `/auto_aim/debug` | — | JPEG 调试图像输出话题 |
 | `bullet_speed` | `23.0` | m/s | 弹丸初速，必须大于 0 |
 | `upstream_latency_ms` | `0.0` | ms | 采集到上游发布时间的固定估计延迟 |
 | `sync_tolerance_ms` | `5` | ms | 图像/IMU 最大配对时间差 |

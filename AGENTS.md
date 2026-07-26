@@ -45,6 +45,7 @@
 | `/rm_mqtt/imu` | `sensor_msgs/msg/Imu` | `rm_mqtt` | `auv_client` |
 | `/rm_mqtt/self_is_red` | `std_msgs/msg/Bool` | `rm_mqtt` | `auv_client` |
 | `/auto_aim/result` | `std_msgs/msg/String` | `auv_client` | `rm_mqtt` |
+| `/auto_aim/debug` | `sensor_msgs/msg/CompressedImage` | `auv_client` | 调试可视化工具 |
 
 - 全部实时 ROS 话题使用 best-effort、keep last 1；不要改为 reliable 或增加深队列来掩盖消费端
   性能问题。
@@ -115,6 +116,8 @@ colcon test-result --test-result-base build/custom_client_adapter --verbose
 
 ## 文档维护
 
+- 用户在协作中提出且会持续影响开发方式、文档风格或项目约定的偏好，必须及时同步到本文件；后续
+  AI 修改或新增相关约定时也必须持续维护本文件，避免交接时遗漏。
 - 根 `README.md` 面向整个仓库，维护总体架构、公共依赖、完整链路和自瞄算法说明。
 - `custom_client_adapter/README.md` 面向适配器独立使用，维护参数、节点、协议、日志和调试方式。
 - 修改话题、消息类型、启动命令、依赖或目录时同步更新相关 README。

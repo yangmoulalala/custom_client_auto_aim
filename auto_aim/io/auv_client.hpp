@@ -61,6 +61,7 @@ public:
   void publish(
     const Command & command, const AUVFrame * frame = nullptr,
     std::optional<std::uint64_t> team_color_revision = std::nullopt);
+  void publish_debug(cv::Mat image, const builtin_interfaces::msg::Time & source_stamp);
 
   double bullet_speed() const;
   std::optional<AUVTeamColor> team_color() const;
@@ -75,6 +76,7 @@ private:
   rclcpp::Subscription<ImuMsg>::SharedPtr imu_subscription_;
   rclcpp::Subscription<BoolMsg>::SharedPtr self_is_red_subscription_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr result_publisher_;
+  rclcpp::Publisher<ImageMsg>::SharedPtr debug_publisher_;
   rclcpp::TimerBase::SharedPtr watchdog_timer_;
   rclcpp::executors::SingleThreadedExecutor executor_;
   std::thread spin_thread_;
@@ -102,6 +104,17 @@ private:
   std::int64_t last_result_steady_ns_{0};
   bool watchdog_result_sent_{false};
 
+  struct DebugFrame
+  {
+    cv::Mat image;
+    builtin_interfaces::msg::Time source_stamp;
+  };
+  std::mutex debug_mutex_;
+  std::condition_variable debug_condition_;
+  std::optional<DebugFrame> pending_debug_frame_;
+  bool debug_stopping_{false};
+  std::thread debug_thread_;
+
   void image_callback(ImageMsg::ConstSharedPtr msg);
   void imu_callback(ImuMsg::ConstSharedPtr msg);
   void self_is_red_callback(BoolMsg::ConstSharedPtr msg);
@@ -110,6 +123,7 @@ private:
   AUVReadStatus convert_image(const ImageMsg::ConstSharedPtr & msg, AUVFrame & frame) const;
   AUVReadStatus convert_imu(const ImuMsg::ConstSharedPtr & msg, AUVFrame & frame) const;
   void publish_json(const Command & command, const builtin_interfaces::msg::Time * stamp);
+  void debug_worker();
   void watchdog_callback();
 };
 

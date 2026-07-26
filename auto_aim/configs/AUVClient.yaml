@@ -2,6 +2,7 @@
 ros_image_topic: "/rm_video/image_processed"
 ros_imu_topic: "/rm_mqtt/imu"
 ros_result_topic: "/auto_aim/result"
+ros_debug_topic: "/auto_aim/debug"
 
 bullet_speed: 24.0
 upstream_latency_ms: 00.0

@@ -25,7 +25,8 @@ bool wait_for_graph(
   const rclcpp::Publisher<sensor_msgs::msg::CompressedImage>::SharedPtr & image_publisher,
   const rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr & imu_publisher,
   const rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr & self_is_red_publisher,
-  const rclcpp::Subscription<std_msgs::msg::String>::SharedPtr & result_subscription)
+  const rclcpp::Subscription<std_msgs::msg::String>::SharedPtr & result_subscription,
+  const rclcpp::Subscription<sensor_msgs::msg::CompressedImage>::SharedPtr & debug_subscription)
 {
   const auto deadline = std::chrono::steady_clock::now() + 3s;
   while (std::chrono::steady_clock::now() < deadline) {
@@ -33,7 +34,8 @@ bool wait_for_graph(
       image_publisher->get_subscription_count() > 0 &&
       imu_publisher->get_subscription_count() > 0 &&
       self_is_red_publisher->get_subscription_count() > 0 &&
-      result_subscription->get_publisher_count() > 0) {
+      result_subscription->get_publisher_count() > 0 &&
+      debug_subscription->get_publisher_count() > 0) {
       return true;
     }
     std::this_thread::sleep_for(10ms);
@@ -108,11 +110,14 @@ int main(int argc, char ** argv)
     auto imu_publisher =
       helper_node->create_publisher<sensor_msgs::msg::Imu>("/imu/data", sensor_qos);
     auto self_is_red_publisher = helper_node->create_publisher<std_msgs::msg::Bool>(
-      "/rm_mqtt/self_is_red", rclcpp::QoS(1).reliable());
+      "/auv_client_test/self_is_red", rclcpp::QoS(1).reliable());
 
     std::mutex result_mutex;
     std::condition_variable result_condition;
     std::string result_json;
+    std::mutex debug_mutex;
+    std::condition_variable debug_condition;
+    sensor_msgs::msg::CompressedImage debug_image;
     auto result_subscription = helper_node->create_subscription<std_msgs::msg::String>(
       "/auto_aim/result", rclcpp::QoS(10).best_effort(),
       [&](std_msgs::msg::String::ConstSharedPtr msg) {
@@ -122,6 +127,16 @@ int main(int argc, char ** argv)
         }
         result_condition.notify_all();
       });
+    auto debug_subscription =
+      helper_node->create_subscription<sensor_msgs::msg::CompressedImage>(
+        "/auto_aim/debug", sensor_qos,
+        [&](sensor_msgs::msg::CompressedImage::ConstSharedPtr msg) {
+          {
+            std::lock_guard<std::mutex> lock(debug_mutex);
+            debug_image = *msg;
+          }
+          debug_condition.notify_all();
+        });
 
     rclcpp::executors::SingleThreadedExecutor helper_executor;
     helper_executor.add_node(helper_node);
@@ -129,7 +144,8 @@ int main(int argc, char ** argv)
 
     check(
       wait_for_graph(
-        image_publisher, imu_publisher, self_is_red_publisher, result_subscription),
+        image_publisher, imu_publisher, self_is_red_publisher, result_subscription,
+        debug_subscription),
       "ROS publishers and subscriptions were not discovered");
 
     check(!client.team_color().has_value(), "team color should be unknown before the first message");
@@ -160,6 +176,25 @@ int main(int argc, char ** argv)
     check(frame.image.cols == 4 && frame.image.rows == 2, "decoded image dimensions should be kept");
     check(frame.image.type() == CV_8UC3, "decoded image type should be CV_8UC3");
     check(std::abs(frame.orientation.w() - 1.0) < 1e-12, "IMU quaternion should be normalized");
+    client.publish_debug(frame.image.clone(), frame.source_stamp);
+    {
+      std::unique_lock<std::mutex> lock(debug_mutex);
+      debug_condition.wait_for(lock, 1s, [&debug_image]() { return !debug_image.data.empty(); });
+    }
+    check(!debug_image.data.empty(), "debug image should be published");
+    if (!debug_image.data.empty()) {
+      check(
+        debug_image.header.stamp.sec == exact_stamp.sec &&
+          debug_image.header.stamp.nanosec == exact_stamp.nanosec,
+        "debug image should keep the source timestamp");
+      check(
+        debug_image.format == "bgr8; jpeg compressed bgr8",
+        "debug image should declare its JPEG BGR encoding");
+      const auto decoded_debug_image = cv::imdecode(debug_image.data, cv::IMREAD_COLOR);
+      check(
+        decoded_debug_image.cols == frame.image.cols && decoded_debug_image.rows == frame.image.rows,
+        "debug image dimensions should be preserved");
+    }
     const auto compensated_age_ms =
       std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - frame.timestamp)
         .count();
