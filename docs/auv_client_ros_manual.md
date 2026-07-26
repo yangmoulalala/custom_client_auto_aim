@@ -524,14 +524,16 @@ ros2 topic echo --qos-reliability best_effort /auto_aim/result
 ```
 
 汇总包含六种输入读取状态、有效帧序号与延迟、IMU yaw/pitch/roll、装甲板数、
-Tracker 状态、目标数以及最终控制命令。需要查看 YOLO 关键点和装甲板标注时使用：
+Tracker 状态、目标数以及最终控制命令。需要查看完整自瞄调试画面时使用：
 
 ```bash
 ./build/auv_client configs/AUVClient.yaml --debug --show
 ```
 
-`--show` 需要图形环境，检测窗口中按 `q` 退出；在无桌面的部署环境只使用
-`--debug`。如果调试工具明确要求 best-effort QoS，可用下列命令强制匹配传感器话题：
+`--show` 会显示 YOLO 观测装甲板、EKF 预测模型和最终瞄准装甲板，左上角显示
+目标类型、旋转角速度和 Tracker 状态。窗口支持保持图像宽高比拖动缩放，按 `q`、
+`Q` 或 `Esc` 退出。该选项需要图形环境；在无桌面的部署环境只使用 `--debug`。
+如果调试工具明确要求 best-effort QoS，可用下列命令强制匹配传感器话题：
 
 ```bash
 ros2 topic echo --qos-reliability best_effort /rm_video/image_processed --field header

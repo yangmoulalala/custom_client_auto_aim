@@ -3,7 +3,7 @@ ros_image_topic: "/rm_video/image_processed"
 ros_imu_topic: "/custom_client/imu"
 ros_result_topic: "/auto_aim/result"
 
-bullet_speed: 23.0
+bullet_speed: 24.0
 upstream_latency_ms: 00.0
 
 # 必须填写为下方 camera_matrix 标定时使用的图像分辨率。
@@ -54,18 +54,18 @@ max_temp_lost_count: 5
 outpost_max_temp_lost_count: 10
 
 #####-----aimer参数-----#####
-yaw_offset: 0 # degree
-pitch_offset: 0 # degree
-comming_angle: 70 # degree
-leaving_angle: 30 # degree
+yaw_offset: -1 # degree
+pitch_offset: -1.5 # degree
+comming_angle: 100 # degree
+leaving_angle: 0 # degree
 min_spin_speed: 2 # rad/s
 decision_speed: 12 # rad/s
 high_speed_delay_time: 0.005 # s
 low_speed_delay_time: 0.005 # s
 
 #####-----shooter参数-----#####
-first_tolerance: 5 # degree
-second_tolerance: 5 # degree
+first_tolerance: 2.5 # degree
+second_tolerance: 2.5 # degree
 judge_distance: 0.5
 auto_fire: true
 
