@@ -37,8 +37,8 @@ io::Command Aimer::aim(
   auto target = targets.front();
 
   auto ekf = target.ekf();
-  double delay_time =
-    target.ekf_x()[7] > decision_speed_ ? high_speed_delay_time_ : low_speed_delay_time_;
+  double delay_time = std::abs(target.ekf_x()[7]) > decision_speed_ ? high_speed_delay_time_
+                                                                    : low_speed_delay_time_;
 
   if (bullet_speed < 14) bullet_speed = 23;
 
@@ -145,9 +145,12 @@ AimPoint Aimer::choose_aim_point(const Target & target)
 {
   Eigen::VectorXd ekf_x = target.ekf_x();
   std::vector<Eigen::Vector4d> armor_xyza_list = target.armor_xyza_list();
+  if (target.name == ArmorName::outpost && !target.outpost_layout_complete()) {
+    armor_xyza_list = {target.armor_xyza(target.last_id)};
+  }
   auto armor_num = armor_xyza_list.size();
   // 如果装甲板未发生过跳变，则只有当前装甲板的位置已知
-  if (!target.jumped) return {true, armor_xyza_list[0]};
+  if (!target.jumped && target.name != ArmorName::outpost) return {true, armor_xyza_list[0]};
 
   // 整车旋转中心的球坐标yaw
   auto center_yaw = std::atan2(ekf_x[2], ekf_x[0]);
@@ -203,6 +206,19 @@ AimPoint Aimer::choose_aim_point(const Target & target)
     if (std::abs(delta_angle_list[i]) > coming_angle) continue;
     if (ekf_x[7] > 0 && delta_angle_list[i] < leaving_angle) return {true, armor_xyza_list[i]};
     if (ekf_x[7] < 0 && delta_angle_list[i] > -leaving_angle) return {true, armor_xyza_list[i]};
+  }
+
+  if (target.name == ArmorName::outpost) {
+    auto best_id = -1;
+    auto best_angle = leaving_angle;
+    for (int i = 0; i < armor_num; i++) {
+      const auto angle = std::abs(delta_angle_list[i]);
+      if (angle <= best_angle) {
+        best_id = i;
+        best_angle = angle;
+      }
+    }
+    if (best_id >= 0) return {true, armor_xyza_list[best_id]};
   }
 
   return {false, armor_xyza_list[0]};

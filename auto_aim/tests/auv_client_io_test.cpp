@@ -111,6 +111,9 @@ int main(int argc, char ** argv)
       helper_node->create_publisher<sensor_msgs::msg::Imu>("/imu/data", sensor_qos);
     auto self_is_red_publisher = helper_node->create_publisher<std_msgs::msg::Bool>(
       "/auv_client_test/self_is_red", rclcpp::QoS(1).reliable());
+    check(
+      !client.debug_publish_ready(),
+      "debug image generation should stay disabled without subscribers");
 
     std::mutex result_mutex;
     std::condition_variable result_condition;
@@ -176,7 +179,9 @@ int main(int argc, char ** argv)
     check(frame.image.cols == 4 && frame.image.rows == 2, "decoded image dimensions should be kept");
     check(frame.image.type() == CV_8UC3, "decoded image type should be CV_8UC3");
     check(std::abs(frame.orientation.w() - 1.0) < 1e-12, "IMU quaternion should be normalized");
+    check(client.debug_publish_ready(), "debug image should be requested after discovery");
     client.publish_debug(frame.image.clone(), frame.source_stamp);
+    check(client.debug_publish_ready(), "debug image generation should not be rate limited");
     {
       std::unique_lock<std::mutex> lock(debug_mutex);
       debug_condition.wait_for(lock, 1s, [&debug_image]() { return !debug_image.data.empty(); });

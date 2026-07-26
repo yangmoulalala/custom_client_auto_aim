@@ -195,10 +195,7 @@ private:
             "timestamp_offset_sec must be finite and within one day");
   }
 
-  void publish_frame(DecodedFrame frame) {
-    const auto stamp = now() + rclcpp::Duration::from_seconds(
-                                   image_config_.timestamp_offset_sec);
-
+  BgrImage make_processed_image(const DecodedFrame &frame) const {
     // 宽高使用同一比例裁剪，中心靠近边界时整体平移 ROI。
     const int crop_width =
         std::clamp(static_cast<int>(
@@ -284,11 +281,26 @@ private:
       }
     }
 
+    return processed;
+  }
+
+  void publish_frame(DecodedFrame frame) {
+    const auto demand = compressed_publisher_->output_demand();
+    if (!demand.raw && !demand.processed) {
+      return;
+    }
+
     CompressionFrame output;
-    output.header.stamp = stamp;
+    output.header.stamp =
+        now() + rclcpp::Duration::from_seconds(
+                    image_config_.timestamp_offset_sec);
     output.header.frame_id = image_config_.frame_id;
-    output.raw = BgrImage{frame.width, frame.height, std::move(frame.bgr)};
-    output.processed = std::move(processed);
+    if (demand.processed) {
+      output.processed = make_processed_image(frame);
+    }
+    if (demand.raw) {
+      output.raw = BgrImage{frame.width, frame.height, std::move(frame.bgr)};
+    }
     compressed_publisher_->submit(std::move(output));
   }
 

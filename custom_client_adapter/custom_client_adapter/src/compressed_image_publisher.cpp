@@ -9,6 +9,13 @@
 namespace rm_video {
 namespace {
 
+bool has_subscribers(
+    const rclcpp::Publisher<sensor_msgs::msg::CompressedImage>::SharedPtr
+        &publisher) {
+  return publisher->get_subscription_count() > 0 ||
+         publisher->get_intra_process_subscription_count() > 0;
+}
+
 struct JpegErrorManager {
   jpeg_error_mgr base;
   std::jmp_buf jump_buffer;
@@ -100,8 +107,14 @@ void CompressedImagePublisher::stop() {
   }
 }
 
+CompressionDemand CompressedImagePublisher::output_demand() const {
+  return CompressionDemand{has_subscribers(raw_publisher_),
+                           has_subscribers(processed_publisher_)};
+}
+
 void CompressedImagePublisher::submit(CompressionFrame frame) {
-  if (!running_.load()) {
+  const auto demand = output_demand();
+  if (!running_.load() || (!demand.raw && !demand.processed)) {
     return;
   }
   {
@@ -126,8 +139,13 @@ void CompressedImagePublisher::worker_loop() {
       frame = std::move(*pending_frame_);
       pending_frame_.reset();
     }
-    publish_image(frame.raw, frame.header, raw_publisher_);
-    publish_image(frame.processed, frame.header, processed_publisher_);
+    const auto demand = output_demand();
+    if (demand.raw) {
+      publish_image(frame.raw, frame.header, raw_publisher_);
+    }
+    if (demand.processed) {
+      publish_image(frame.processed, frame.header, processed_publisher_);
+    }
   }
 }
 

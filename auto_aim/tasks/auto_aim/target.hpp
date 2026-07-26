@@ -2,6 +2,7 @@
 #define AUTO_AIM__TARGET_HPP
 
 #include <Eigen/Dense>
+#include <array>
 #include <chrono>
 #include <optional>
 #include <queue>
@@ -13,6 +14,9 @@
 
 namespace auto_aim
 {
+
+inline constexpr double OUTPOST_RADIUS = 0.275;
+inline constexpr double OUTPOST_HEIGHT_STEP = 0.102;
 
 class Target
 {
@@ -35,7 +39,9 @@ public:
 
   Eigen::VectorXd ekf_x() const;
   const tools::ExtendedKalmanFilter & ekf() const;
+  Eigen::Vector4d armor_xyza(int id) const;
   std::vector<Eigen::Vector4d> armor_xyza_list() const;
+  bool outpost_layout_complete() const;
 
   bool diverged() const;
 
@@ -55,7 +61,14 @@ private:
   tools::ExtendedKalmanFilter ekf_;
   std::chrono::steady_clock::time_point t_;
 
+  std::array<bool, 3> outpost_observed_{{false, false, false}};
+  std::array<double, 3> outpost_measured_heights_{{0, 0, 0}};
+  std::array<int, 3> outpost_height_observation_counts_{{0, 0, 0}};
+  int outpost_layout_index_{0};
+
   void update_ypda(const Armor & armor, int id);  // yaw pitch distance angle
+  void update_outpost_layout(const Armor & armor, int id);
+  double outpost_height_offset(int id) const;
 
   Eigen::Vector3d h_armor_xyz(const Eigen::VectorXd & x, int id) const;
   Eigen::MatrixXd h_jacobian(const Eigen::VectorXd & x, int id) const;

@@ -69,7 +69,6 @@ AUVClient::AUVClient(const std::string & config_path)
     upstream_latency_ms_ >= max_frame_age_ms_) {
     throw std::runtime_error("Invalid AUVClient timing or bullet-speed configuration");
   }
-
   node_ = std::make_shared<rclcpp::Node>("auv_client");
   auto sensor_qos = rclcpp::SensorDataQoS().keep_last(1).best_effort();
 
@@ -375,6 +374,7 @@ void AUVClient::publish_debug(
   cv::Mat image, const builtin_interfaces::msg::Time & source_stamp)
 {
   if (image.empty()) return;
+  if (!has_debug_subscribers()) return;
 
   {
     std::lock_guard<std::mutex> lock(debug_mutex_);
@@ -382,6 +382,20 @@ void AUVClient::publish_debug(
     pending_debug_frame_ = DebugFrame{std::move(image), source_stamp};
   }
   debug_condition_.notify_one();
+}
+
+bool AUVClient::debug_publish_ready()
+{
+  if (!has_debug_subscribers()) return false;
+
+  std::lock_guard<std::mutex> lock(debug_mutex_);
+  return !debug_stopping_;
+}
+
+bool AUVClient::has_debug_subscribers() const
+{
+  return debug_publisher_->get_subscription_count() > 0 ||
+         debug_publisher_->get_intra_process_subscription_count() > 0;
 }
 
 void AUVClient::debug_worker()
@@ -396,6 +410,8 @@ void AUVClient::debug_worker()
       frame = std::move(*pending_debug_frame_);
       pending_debug_frame_.reset();
     }
+
+    if (!has_debug_subscribers()) continue;
 
     ImageMsg message;
     message.header.stamp = frame.source_stamp;

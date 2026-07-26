@@ -94,7 +94,7 @@ ros2 topic info /rm_video/image_raw
 ros2 topic info /rm_video/image_processed
 ```
 
-两个话题都发布 `sensor_msgs/msg/CompressedImage` JPEG，并使用 best-effort QoS。`image_raw` 保持完整解码尺寸，不应用 ROI、亮度和旋转；`image_processed` 应用配置中的 ROI、亮度和旋转。两个消息对同一帧使用相同的补偿后时间戳和 `frame_id`。FFmpeg 码流解码与 BGR 转换在不同线程执行，中间只保留最新的已解码原生帧；JPEG 压缩另有独立线程并只保留最新待压缩帧。默认 DDS 发布队列深度为 `1`，各阶段均不会积压旧画面。
+两个话题都发布 `sensor_msgs/msg/CompressedImage` JPEG，并使用 best-effort QoS。`image_raw` 保持完整解码尺寸，不应用 ROI、亮度和旋转；`image_processed` 应用配置中的 ROI、亮度和旋转。两个消息对同一帧使用相同的补偿后时间戳和 `frame_id`。FFmpeg 码流解码与 BGR 转换在不同线程执行，中间只保留最新的已解码原生帧；JPEG 压缩另有独立线程并只保留最新待压缩帧。raw 和 processed 输出分别检查订阅者，没有订阅者的输出会跳过图像处理和 JPEG 编码；HEVC/H.264 接收和解码仍持续运行以保持参考帧状态。默认 DDS 发布队列深度为 `1`，各阶段均不会积压旧画面。
 
 ## 自定义客户端 MQTT
 

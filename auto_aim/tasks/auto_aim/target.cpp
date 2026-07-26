@@ -1,28 +1,44 @@
 #include "target.hpp"
 
+#include <algorithm>
+#include <array>
+#include <limits>
 #include <numeric>
+#include <stdexcept>
 
 #include "tools/logger.hpp"
 #include "tools/math_tools.hpp"
 
 namespace auto_aim
 {
+namespace
+{
+constexpr std::array<std::array<double, 3>, 6> OUTPOST_HEIGHT_LAYOUTS{{
+  {{0, OUTPOST_HEIGHT_STEP, 2 * OUTPOST_HEIGHT_STEP}},
+  {{0, 2 * OUTPOST_HEIGHT_STEP, OUTPOST_HEIGHT_STEP}},
+  {{0, -OUTPOST_HEIGHT_STEP, OUTPOST_HEIGHT_STEP}},
+  {{0, OUTPOST_HEIGHT_STEP, -OUTPOST_HEIGHT_STEP}},
+  {{0, -2 * OUTPOST_HEIGHT_STEP, -OUTPOST_HEIGHT_STEP}},
+  {{0, -OUTPOST_HEIGHT_STEP, -2 * OUTPOST_HEIGHT_STEP}},
+}};
+}  // namespace
+
 Target::Target(
   const Armor & armor, std::chrono::steady_clock::time_point t, double radius, int armor_num,
   Eigen::VectorXd P0_dig)
 : name(armor.name),
   armor_type(armor.type),
+  priority(armor.priority),
   jumped(false),
   last_id(0),
-  update_count_(0),
   armor_num_(armor_num),
-  t_(t),
+  switch_count_(0),
+  update_count_(0),
   is_switch_(false),
   is_converged_(false),
-  switch_count_(0)
+  t_(t)
 {
   auto r = radius;
-  priority = armor.priority;
   const Eigen::VectorXd & xyz = armor.xyz_in_world;
   const Eigen::VectorXd & ypr = armor.ypr_in_world;
 
@@ -47,9 +63,25 @@ Target::Target(
   };
 
   ekf_ = tools::ExtendedKalmanFilter(x0, P0, x_add);  //初始化滤波器（预测量、预测量协方差）
+
+  if (name == ArmorName::outpost) {
+    outpost_observed_[0] = true;
+    outpost_measured_heights_[0] = armor.xyz_in_world.z();
+    outpost_height_observation_counts_[0] = 1;
+  }
 }
 
-Target::Target(double x, double vyaw, double radius, double h) : armor_num_(4)
+Target::Target(double x, double vyaw, double radius, double h)
+: name(ArmorName::not_armor),
+  armor_type(ArmorType::small),
+  priority(ArmorPriority::fifth),
+  jumped(true),
+  last_id(0),
+  armor_num_(4),
+  switch_count_(0),
+  update_count_(0),
+  is_switch_(false),
+  is_converged_(true)
 {
   Eigen::VectorXd x0{{x, 0, 0, 0, 0, 0, 0, vyaw, radius, 0, h}};
   Eigen::VectorXd P0_dig{{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}};
@@ -138,7 +170,7 @@ void Target::predict(double dt)
 void Target::update(const Armor & armor)
 {
   // 装甲板匹配
-  int id;
+  int id = 0;
   auto min_angle_error = 1e10;
   const std::vector<Eigen::Vector4d> & xyza_list = armor_xyza_list();
 
@@ -155,8 +187,8 @@ void Target::update(const Armor & armor)
       return ypd1[2] < ypd2[2];
     });
 
-  // 取前3个distance最小的装甲板
-  for (int i = 0; i < 3; i++) {
+  // 取distance最小的至多3个装甲板
+  for (int i = 0; i < std::min(3, armor_num_); i++) {
     const auto & xyza = xyza_i_list[i].first;
     Eigen::Vector3d ypd = tools::xyz2ypd(xyza.head(3));
     auto angle_error = std::abs(tools::limit_rad(armor.ypr_in_world[0] - xyza[3])) +
@@ -181,7 +213,46 @@ void Target::update(const Armor & armor)
   last_id = id;
   update_count_++;
 
+  if (name == ArmorName::outpost) update_outpost_layout(armor, id);
   update_ypda(armor, id);
+}
+
+void Target::update_outpost_layout(const Armor & armor, int id)
+{
+  if (id < 0 || id >= static_cast<int>(outpost_observed_.size())) return;
+
+  auto & count = outpost_height_observation_counts_[id];
+  auto & average = outpost_measured_heights_[id];
+  if (count == 0) {
+    average = armor.xyz_in_world.z();
+  } else {
+    average += (armor.xyz_in_world.z() - average) / (count + 1);
+  }
+  count++;
+  outpost_observed_[id] = true;
+
+  auto best_score = std::numeric_limits<double>::max();
+  for (int layout_index = 0; layout_index < static_cast<int>(OUTPOST_HEIGHT_LAYOUTS.size());
+       layout_index++) {
+    auto score = 0.0;
+    for (int armor_id = 0; armor_id < static_cast<int>(outpost_observed_.size()); armor_id++) {
+      if (!outpost_observed_[armor_id]) continue;
+      const auto measured_offset =
+        outpost_measured_heights_[armor_id] - outpost_measured_heights_[0];
+      const auto error = measured_offset - OUTPOST_HEIGHT_LAYOUTS[layout_index][armor_id];
+      score += error * error;
+    }
+    if (score < best_score) {
+      best_score = score;
+      outpost_layout_index_ = layout_index;
+    }
+  }
+}
+
+double Target::outpost_height_offset(int id) const
+{
+  if (id < 0 || id >= static_cast<int>(outpost_observed_.size())) return 0;
+  return OUTPOST_HEIGHT_LAYOUTS[outpost_layout_index_][id];
 }
 
 void Target::update_ypda(const Armor & armor, int id)
@@ -226,16 +297,30 @@ Eigen::VectorXd Target::ekf_x() const { return ekf_.x; }
 
 const tools::ExtendedKalmanFilter & Target::ekf() const { return ekf_; }
 
+Eigen::Vector4d Target::armor_xyza(int id) const
+{
+  if (id < 0 || id >= armor_num_) throw std::out_of_range("Armor id out of range");
+
+  auto angle = tools::limit_rad(ekf_.x[6] + id * 2 * CV_PI / armor_num_);
+  Eigen::Vector3d xyz = h_armor_xyz(ekf_.x, id);
+  return {xyz[0], xyz[1], xyz[2], angle};
+}
+
 std::vector<Eigen::Vector4d> Target::armor_xyza_list() const
 {
   std::vector<Eigen::Vector4d> _armor_xyza_list;
 
   for (int i = 0; i < armor_num_; i++) {
-    auto angle = tools::limit_rad(ekf_.x[6] + i * 2 * CV_PI / armor_num_);
-    Eigen::Vector3d xyz = h_armor_xyz(ekf_.x, i);
-    _armor_xyza_list.push_back({xyz[0], xyz[1], xyz[2], angle});
+    _armor_xyza_list.push_back(armor_xyza(i));
   }
   return _armor_xyza_list;
+}
+
+bool Target::outpost_layout_complete() const
+{
+  return name != ArmorName::outpost ||
+         std::all_of(
+           outpost_observed_.begin(), outpost_observed_.end(), [](bool observed) { return observed; });
 }
 
 bool Target::diverged() const
@@ -272,7 +357,12 @@ Eigen::Vector3d Target::h_armor_xyz(const Eigen::VectorXd & x, int id) const
   auto r = (use_l_h) ? x[8] + x[9] : x[8];
   auto armor_x = x[0] - r * std::cos(angle);
   auto armor_y = x[2] - r * std::sin(angle);
-  auto armor_z = (use_l_h) ? x[4] + x[10] : x[4];
+  auto armor_z = x[4];
+  if (name == ArmorName::outpost) {
+    armor_z += outpost_height_offset(id);
+  } else if (use_l_h) {
+    armor_z += x[10];
+  }
 
   return {armor_x, armor_y, armor_z};
 }

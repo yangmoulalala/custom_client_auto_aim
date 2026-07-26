@@ -61,6 +61,7 @@ public:
   void publish(
     const Command & command, const AUVFrame * frame = nullptr,
     std::optional<std::uint64_t> team_color_revision = std::nullopt);
+  bool debug_publish_ready();
   void publish_debug(cv::Mat image, const builtin_interfaces::msg::Time & source_stamp);
 
   double bullet_speed() const;
@@ -123,6 +124,7 @@ private:
   AUVReadStatus convert_image(const ImageMsg::ConstSharedPtr & msg, AUVFrame & frame) const;
   AUVReadStatus convert_imu(const ImuMsg::ConstSharedPtr & msg, AUVFrame & frame) const;
   void publish_json(const Command & command, const builtin_interfaces::msg::Time * stamp);
+  bool has_debug_subscribers() const;
   void debug_worker();
   void watchdog_callback();
 };

@@ -55,7 +55,8 @@ if(TARGET auv_io)
             auv_client_io_test ${OpenCV_LIBS} nlohmann_json::nlohmann_json auv_io)
         add_test(NAME auv_client_io_test COMMAND auv_client_io_test)
         set_tests_properties(
-            auv_client_io_test PROPERTIES TIMEOUT 15 ENVIRONMENT "ROS_LOG_DIR=/tmp")
+            auv_client_io_test PROPERTIES TIMEOUT 15
+            ENVIRONMENT "ROS_LOG_DIR=/tmp;ROS_DOMAIN_ID=231")
 
         add_executable(solver_image_size_test tests/solver_image_size_test.cpp)
         target_compile_definitions(
@@ -115,6 +116,14 @@ if(BUILD_TESTING)
     set_tests_properties(
         yolov5_model_test PROPERTIES TIMEOUT 30
         WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}/..")
+
+    add_executable(outpost_model_test tests/outpost_model_test.cpp)
+    target_compile_definitions(
+        outpost_model_test PRIVATE
+        OUTPOST_MODEL_TEST_CONFIG="${PROJECT_SOURCE_DIR}/tests/outpost_model_test.yaml")
+    target_link_libraries(
+        outpost_model_test ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim tools io)
+    add_test(NAME outpost_model_test COMMAND outpost_model_test)
 endif()
 
 add_executable(auto_aim_test tests/auto_aim_test.cpp)

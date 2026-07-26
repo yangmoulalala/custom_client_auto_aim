@@ -11,6 +11,16 @@ if (( $# > 0 )); then
     shift
 fi
 
+show=false
+launch_args=()
+for arg in "$@"; do
+    if [[ "${arg}" == "--show" ]]; then
+        show=true
+    else
+        launch_args+=("${arg}")
+    fi
+done
+
 while [[ ! "${client_id}" =~ ^[1-9][0-9]*$ ]]; do
     [[ -z "${client_id}" ]] || echo "Error: MQTT client ID must be a positive integer." >&2
     if ! read -r -p "Enter MQTT client ID (positive integer): " client_id; then
@@ -38,10 +48,14 @@ source install/setup.bash
 
 # 两端都编译成功后，再同时启动适配器和自瞄。
 ros2 launch custom_client_adapter custom_client_adapter.launch.py \
-    "client_id:=${client_id}" "$@" &
+    "client_id:=${client_id}" "${launch_args[@]}" &
 adapter_pid=$!
 
-./build/auto_aim/auv_client auto_aim/configs/AUVClient.yaml --debug &
+auto_aim_args=(auto_aim/configs/AUVClient.yaml --debug)
+if [[ "${show}" == true ]]; then
+    auto_aim_args+=(--show)
+fi
+./build/auto_aim/auv_client "${auto_aim_args[@]}" &
 auto_aim_pid=$!
 
 # Ctrl+C 或任一进程退出时，同时清理两个进程。

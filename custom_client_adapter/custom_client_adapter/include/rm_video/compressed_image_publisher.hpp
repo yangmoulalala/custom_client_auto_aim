@@ -30,6 +30,11 @@ struct CompressionFrame {
   BgrImage processed;
 };
 
+struct CompressionDemand {
+  bool raw = false;
+  bool processed = false;
+};
+
 class CompressedImagePublisher {
 public:
   CompressedImagePublisher(rclcpp::Node &node, const std::string &raw_topic,
@@ -43,6 +48,7 @@ public:
 
   void start();
   void stop();
+  CompressionDemand output_demand() const;
   void submit(CompressionFrame frame);
 
 private:

@@ -45,6 +45,20 @@ if(BUILD_TESTING)
   ament_add_pytest_test(rm_mqtt_tests test
     APPEND_ENV PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}
   )
+
+  add_executable(compressed_image_publisher_test
+    test/compressed_image_publisher_test.cpp
+    src/compressed_image_publisher.cpp
+  )
+  target_include_directories(compressed_image_publisher_test PRIVATE include)
+  target_link_libraries(compressed_image_publisher_test JPEG::JPEG)
+  ament_target_dependencies(compressed_image_publisher_test rclcpp sensor_msgs std_msgs)
+  target_compile_options(compressed_image_publisher_test PRIVATE
+    -Wall -Wextra -Wpedantic)
+  add_test(NAME compressed_image_publisher_test
+    COMMAND compressed_image_publisher_test)
+  set_tests_properties(compressed_image_publisher_test PROPERTIES
+    TIMEOUT 10 ENVIRONMENT "ROS_LOG_DIR=/tmp;ROS_DOMAIN_ID=232")
 endif()
 
 ament_package()

@@ -7,9 +7,9 @@
 `auv_client` 用 ROS 2 标准消息替代项目原有的工业相机和 CBoard 输入，始终运行自瞄链路，不包含 CBoard 模式切换和打符分支。
 
 ```text
-sensor_msgs/Image ─┐
-                   ├─ 时间戳配对 → Detector → Solver → Tracker → Aimer → Shooter
-sensor_msgs/Imu ───┘                                                   │
+sensor_msgs/CompressedImage ─┐
+                             ├─ 时间戳配对 → Detector → Solver → Tracker → Aimer → Shooter
+sensor_msgs/Imu ─────────────┘                                                   │
                                                                        ▼
                                                      std_msgs/String（JSON）
 ```
@@ -21,7 +21,7 @@ sensor_msgs/Imu ───┘                                                   �
 | 可执行程序 | `auv_client` |
 | ROS 节点名 | `auv_client` |
 | 默认配置文件 | `auto_aim/configs/AUVClient.yaml` |
-| 输入 | 原始图像、IMU 姿态 |
+| 输入 | 压缩图像、IMU 姿态 |
 | 输出 | JSON 格式的绝对 yaw/pitch 自瞄指令 |
 | ROS 消息依赖 | `rclcpp`、`sensor_msgs`、`std_msgs` |
 
@@ -112,12 +112,14 @@ ROS 消息中的四元数排列为 `x, y, z, w`。程序内部按 Eigen 的构�
 
 ### 3.4 调试图像输出
 
-`auv_client` 不创建本地 OpenCV 窗口。每个成功处理的输入帧都会生成包含检测框、EKF 模型、
-瞄准点和 Tracker 状态的 JPEG 调试图，并通过 `/auto_aim/debug` 发布。消息类型为
-`sensor_msgs/msg/CompressedImage`，其 `header.stamp` 与对应输入图像一致。
+存在 `/auto_aim/debug` 订阅者时，程序会为每个成功处理的输入帧生成包含检测框、EKF 模型、
+瞄准点和 Tracker 状态的 JPEG 调试图。消息类型为 `sensor_msgs/msg/CompressedImage`，其
+`header.stamp` 与对应输入图像一致。
 
 JPEG 编码在独立线程执行，待编码槽位只保留最新一帧；编码速度低于处理速度时会覆盖旧调试帧，
-不会积压并影响控制链路。该话题始终启用，不受 `--debug` 日志参数控制。
+不会积压并影响控制链路。发布器始终启用，不受 `--debug` 或 `--show` 控制；没有订阅者时跳过
+调试图绘制和 JPEG 编码。传入 `--show` 时，程序按每个成功处理帧显示本地 OpenCV 窗口；窗口
+显示不受 ROS 订阅状态限制，不传时不会创建窗口。
 
 ## 4. 输出帧格式
 
@@ -402,17 +404,45 @@ t_camera2gimbal:  [tx, ty, tz]
 
 完整默认项和注释见 `auto_aim/configs/AUVClient.yaml`。
 
+### 7.5 2026 前哨站预测
+
+前哨站沿用小装甲 PnP 模型。三块装甲按 `120 degree` 间隔分布，回转半径为 `0.275 m`，装甲
+中心高度相邻相差 `0.102 m`。由于首次观测的运动学 ID 不固定对应低、中、高装甲，Tracker 会根据
+已观测 ID 的相对高度，在六种合法高度排列中持续选择残差最小的一种。
+
+三块装甲尚未全部被观测时，Aimer 只使用当前 `last_id`；全部观测后恢复跨板预测。选板保留原有
+`70/30 degree` 方向窗口，静止或方向条件没有候选时仅在 `30 degree` 正面窗口内回退。无合法
+瞄准点时输出 `control=false`、`shoot=false`。前哨站 EKF 收敛且 `|angular_velocity| > 2 rad/s`
+时仍将转速吸附到 `+/-2.51 rad/s`。高低速附加预测时间使用角速度绝对值与 `decision_speed` 比较，
+因此正反转采用相同阈值。
+
 ## 8. 标定流程
 
-ROS 标定工具使用对称圆点阵列，板参数配置在 `auto_aim/configs/calibration.yaml`：
+ROS 标定工具使用棋盘格，板参数配置在 `auto_aim/configs/calibration.yaml`。`pattern_cols` 和
+`pattern_rows` 是内部角点数，不是黑白格数量：
 
 ```yaml
 pattern_cols: 10
-pattern_rows: 7
-center_distance_mm: 40
-ros_image_topic: "/camera/image_raw"
-ros_imu_topic: "/imu/data"
+pattern_rows: 6
+square_size_mm: 75
+ros_image_topic: "/calibration/image_raw"
+ros_imu_topic: "/rm_mqtt/imu"
 ```
+
+`auv_client` 运行时订阅 `CompressedImage`，但两个标定工具订阅的是原始 `sensor_msgs/Image`。
+当前适配器输出需要先临时解码，并通过 QoS override 兼容视频发布端的 best-effort QoS：
+
+```bash
+ros2 run image_transport republish --ros-args \
+  -p in_transport:=compressed \
+  -p out_transport:=raw \
+  -p qos_overrides./rm_video/image_processed.subscription.reliability:=best_effort \
+  -r in/compressed:=/rm_video/image_processed \
+  -r out:=/calibration/image_raw
+```
+
+标定使用的必须是最终送入自瞄的 processed 画面。标定后改变视频 ROI、旋转、宽高比或相机安装
+位置时应重新标定；转换进程会保留原消息时间戳，以便手眼工具继续与 IMU 配对。
 
 ### 8.1 相机内参标定
 
@@ -471,7 +501,7 @@ ros_imu_topic: "/imu/data"
 
 - 两条消息使用同一 ROS 时钟和一致的 `header.stamp` 语义。
 - 上游已经完成“某帧图像对应哪个姿态”的时间对齐。
-- 图像保持固定分辨率，并使用 `bgr8`、`rgb8` 或 `mono8`。
+- `CompressedImage.data` 可被 OpenCV 解码，且解码后的图像分辨率和宽高比在运行期间保持固定。
 - IMU 发布 body 到 absolute/world 的有效、有限、非零四元数。
 - 采用与 best-effort 传感器订阅兼容的 QoS，建议 depth 1。
 - 同机高带宽图像场景优先启用 DDS 共享内存，并检查实际 DDS 配置是否生效。
@@ -507,7 +537,7 @@ ros2 topic echo /auto_aim/result
 | CMake 不生成 `auv_client` | ROS 环境未 source，或缺少标准消息包 | source ROS 2 后重新执行 CMake，检查 `rclcpp/sensor_msgs/std_msgs` |
 | 启动立即退出 | 标定宽高为 0、YAML 缺字段或时间参数非法 | 写入真实标定尺寸并检查 `auto_aim/configs/AUVClient.yaml` |
 | 一直输出 `control=false` | 无目标、图像非法、IMU 无效、配对失败或帧过期 | 查看日志，并分别 echo 两个输入话题 |
-| 图像有数据但节点拒绝 | 编码、`step/data`、宽高比或运行时尺寸不符合约定 | 改为受支持编码并固定分辨率 |
+| 图像有数据但节点拒绝 | 压缩负载损坏、宽高比错误或解码后尺寸在运行中改变 | 检查视频解码/编码错误并固定分辨率 |
 | 经常提示 IMU 无法匹配 | 两路时钟/时间戳语义不一致或容差过小 | 修正上游对齐，测量时间差后谨慎调整同步参数 |
 | 提示图像过期 | ROS 时钟不同步、处理堵塞或上游延迟未配置合理 | 统一时钟，降低队列深度，检查 `upstream_latency_ms` 和帧率 |
 | yaw/pitch 方向错误 | IMU 四元数方向、NED/ENU 或外参轴向错误 | 按第 6 节逐级验证 `R_gimbal2imubody` 和 `R_camera2gimbal` |

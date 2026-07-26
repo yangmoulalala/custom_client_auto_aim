@@ -3,9 +3,12 @@ pattern_cols: 10
 pattern_rows: 6
 square_size_mm: 75
 
-# ROS2 相机内参标定图像话题
-ros_image_topic: "/rm_video/image_processed"
+# ROS2 标定工具订阅原始 sensor_msgs/Image；用 README 中的 image_transport 命令将
+# /rm_video/image_processed 临时解码到此话题。不要直接填 CompressedImage 话题。
+ros_image_topic: "/calibration/image_raw"
+# 手眼标定使用的 IMU 姿态话题，时间戳必须和图像使用同一 ROS 时钟。
 ros_imu_topic: "/rm_mqtt/imu"
+# 手眼标定图像/IMU 的最大时间差和最长等待时间，单位 ms；不要靠放大它们掩盖时间戳错误。
 sync_tolerance_ms: 5
 sync_wait_ms: 10
 
@@ -15,9 +18,10 @@ calibration_image_height: 270
 camera_matrix: [689.17782867242408, 0, 263.03005188708039, 0, 688.65887141546, 139.58627690456646, 0, 0, 1]
 distort_coeffs: [-0.27214187315547, 1.4224009167280049, 0.0045267040990549148, 0.0055930843150677383, 0]
 
-
+# gimbal 轴到 IMU body 轴的机械安装映射，3x3 行主序；手眼工具只校验并原样写回。
 R_gimbal2imubody: [1, 0, 0, 0, 1, 0,  0, 0, 1]
 
+# 以下为上游工业相机/CBoard 标定程序的兼容字段，当前 ros_calibrate_* 工具不会读取。
 camera_name: "hikrobot"
 exposure_ms: 3
 gain: 10.0
