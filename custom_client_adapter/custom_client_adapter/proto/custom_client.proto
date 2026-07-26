@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package rm_mqtt.proto;
+
+message CustomByteBlock {
+  optional bytes data = 1;
+}
+
+message CustomControl {
+  optional bytes data = 1;
+}

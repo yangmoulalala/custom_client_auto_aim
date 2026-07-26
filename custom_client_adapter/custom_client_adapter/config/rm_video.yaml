@@ -1,0 +1,50 @@
+rm_video:
+  ros__parameters:
+    # UDP 监听地址。0.0.0.0 表示监听所有 IPv4 网卡。
+    udp.bind_address: "0.0.0.0"
+    # RoboMaster 视频流的 UDP 端口。
+    udp.port: 3334
+    # 内核 UDP 接收缓冲区，增大该值可降低高码率下的系统丢包概率。
+    udp.receive_buffer_bytes: 4194304
+    # 接收超时用于及时清理残帧并响应节点退出，范围为 1 到 1000 ms。
+    udp.receive_timeout_ms: 100
+
+    # 视频编码格式，可选 hevc、h264、mjpeg。
+    decoder.codec: "hevc"
+    # FFmpeg 切片解码线程数，0 表示自动使用合适的 CPU 核心数。
+    decoder.threads: 0
+    # 待解码完整帧队列深度，用于吸收关键帧计算峰值；队列满时清空积压以恢复实时性。
+    decoder.decode_queue_size: 4
+    # 单个完整编码帧允许的最大字节数。
+    decoder.max_frame_bytes: 16777216
+    # 可同时重组的乱序视频帧数量。
+    decoder.reassembly_slots: 8
+    # 未完成帧的保留时间；实时画面优先，不等待过旧分片。
+    decoder.reassembly_timeout_ms: 200
+
+    # 未应用 ROI、亮度和旋转处理的完整画面 JPEG 话题。
+    publisher.raw_topic: "/rm_video/image_raw"
+    # 应用 ROI、亮度和旋转处理后的画面 JPEG 话题。
+    publisher.processed_topic: "/rm_video/image_processed"
+    # 写入每帧 header.frame_id 的坐标系名称。
+    publisher.frame_id: "rm_video_camera"
+    # 发布队列深度。保持为 1 可避免订阅端积压旧画面。
+    publisher.qos_depth: 1
+
+    # JPEG 压缩质量，范围为 1 到 100；数值越低，带宽和编码开销越小。
+    compression.jpeg_quality: 80
+
+    # ROI 中心点横坐标，范围为 0.0 到 1.0。
+    roi.center_x: 0.5
+    # ROI 中心点纵坐标，范围为 0.0 到 1.0。
+    roi.center_y: 0.5
+    # 宽高共同使用的裁剪比例，范围为大于 0.0 到 1.0。
+    roi.crop_ratio: 0.25
+
+    # processed 图像逆时针旋转 90 度的次数，范围为 0 到 3。
+    processed.rotation_quarter_turns: 2
+
+    # 亮度乘法增益：1.0 不变，小于 1.0 变暗，大于 1.0 变亮。
+    brightness_gain: 0.5
+    # 图像时间戳补偿秒数，范围为正负一，例如 -0.05 表示提前 50 ms。
+    timestamp_offset_sec: -0.06

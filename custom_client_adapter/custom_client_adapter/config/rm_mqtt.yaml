@@ -1,0 +1,38 @@
+rm_mqtt:
+  ros__parameters:
+    # 裁判系统自定义客户端 MQTT 服务器地址。
+    mqtt.host: "192.168.12.1"
+    # 裁判系统自定义客户端 MQTT 服务器端口。
+    mqtt.port: 3333
+    # MQTT 心跳保活时间，单位为秒。
+    mqtt.keepalive_sec: 10
+    # MQTT 未连接时的自动重连间隔，默认每秒重试一次。
+    mqtt.reconnect_interval_sec: 1
+    # 机器人 0x0310 数据对应的 MQTT 订阅主题。
+    mqtt.subscription_topic: "CustomByteBlock"
+    # 机器人 0x0311 控制数据对应的 MQTT 发布主题。
+    mqtt.control_topic: "CustomControl"
+
+    # IMU 姿态消息发布话题。
+    publisher.imu_topic: "/rm_mqtt/imu"
+    # 己方是否为红方的布尔消息发布话题。
+    publisher.self_is_red_topic: "/rm_mqtt/self_is_red"
+    # 写入 IMU 消息 header.frame_id 的坐标系名称。
+    publisher.frame_id: "imu_link"
+    # ROS 发布队列深度；保持为 1 可避免旧消息积压。
+    publisher.qos_depth: 1
+
+    # 自瞄控制 JSON 的 ROS 订阅话题。
+    subscriber.control_topic: "/auto_aim/result"
+    # ROS 控制订阅队列深度；保持为 1 可避免旧控制积压。
+    subscriber.qos_depth: 1
+
+    # 是否允许把 shoot=true 转换为下位机开火模式；关闭时只控制云台。
+    control.allow_fire: true
+    # 0x0311 最大发送频率，单位为 Hz；裁判系统要求不得超过 75 Hz。
+    control.max_send_rate_hz: 75.0
+
+    # IMU 时间戳补偿秒数，可为负数，例如 -0.05 表示提前 50 ms。
+    timestamp_offset_sec: 0.0
+    # tx/rx packets/s 统计和日志输出窗口，单位为秒。
+    statistics.window_sec: 1.0

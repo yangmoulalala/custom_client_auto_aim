@@ -7,11 +7,11 @@
 `auv_client` 用 ROS 2 标准消息替代项目原有的工业相机和 CBoard 输入，始终运行自瞄链路，不包含 CBoard 模式切换和打符分支。
 
 ```text
-sensor_msgs/CompressedImage ─┐
-sensor_msgs/Imu ───┼─ 时间戳配对 → YOLOV5 → 敌方颜色过滤 → Solver → Tracker → Aimer → Shooter
-std_msgs/Bool ─────┘                                                               │
-                                                                                   ▼
-                                                                 std_msgs/String（JSON）
+sensor_msgs/Image ─┐
+                   ├─ 时间戳配对 → Detector → Solver → Tracker → Aimer → Shooter
+sensor_msgs/Imu ───┘                                                   │
+                                                                       ▼
+                                                     std_msgs/String（JSON）
 ```
 
 基本信息：
@@ -20,8 +20,8 @@ std_msgs/Bool ─────┘                                                
 |---|---|
 | 可执行程序 | `auv_client` |
 | ROS 节点名 | `auv_client` |
-| 默认配置文件 | `configs/AUVClient.yaml` |
-| 输入 | 原始图像、IMU 姿态、己方阵营 |
+| 默认配置文件 | `auto_aim/configs/AUVClient.yaml` |
+| 输入 | 原始图像、IMU 姿态 |
 | 输出 | JSON 格式的绝对 yaw/pitch 自瞄指令 |
 | ROS 消息依赖 | `rclcpp`、`sensor_msgs`、`std_msgs` |
 
@@ -33,8 +33,8 @@ std_msgs/Bool ─────┘                                                
 
 ```bash
 source /opt/ros/jazzy/setup.bash
-cmake -B build
-cmake --build build -j
+cmake -S auto_aim -B build/auto_aim -DCMAKE_BUILD_TYPE=Release
+cmake --build build/auto_aim -j
 ```
 
 CMake 输出中出现以下内容表示标准 ROS 接口已启用：
@@ -43,16 +43,16 @@ CMake 输出中出现以下内容表示标准 ROS 接口已启用：
 ROS2 standard messages found, compiling AUV client I/O.
 ```
 
-首次运行前，必须在 `configs/AUVClient.yaml` 中填写真实标定结果，特别是 `calibration_image_width` 和 `calibration_image_height`。这两个值为 `0` 时程序会拒绝启动。
+首次运行前，必须在 `auto_aim/configs/AUVClient.yaml` 中填写真实标定结果，特别是 `calibration_image_width` 和 `calibration_image_height`。这两个值为 `0` 时程序会拒绝启动。
 
 ```bash
-./build/auv_client configs/AUVClient.yaml
+./build/auto_aim/auv_client auto_aim/configs/AUVClient.yaml
 ```
 
-不传路径时也默认使用 `configs/AUVClient.yaml`：
+不传路径时也默认使用 `auto_aim/configs/AUVClient.yaml`：
 
 ```bash
-./build/auv_client
+./build/auto_aim/auv_client
 ```
 
 配置通过 YAML 加载，不是 ROS 参数；修改配置后需要重启进程。
@@ -61,42 +61,47 @@ ROS2 standard messages found, compiling AUV client I/O.
 
 ### 3.1 接口总表
 
-| 方向 | 当前配置话题 | ROS 类型 | QoS |
+| 方向 | 默认话题 | ROS 类型 | QoS |
 |---|---|---|---|
-| 输入 | `/rm_video/image_processed` | `sensor_msgs/msg/CompressedImage` | best effort、volatile、keep last 1 |
-| 输入 | `/custom_client/imu` | `sensor_msgs/msg/Imu` | best effort、volatile、keep last 1 |
-| 输入 | `/custom_client/self_is_red` | `std_msgs/msg/Bool` | best effort、volatile、keep last 1 |
-| 输出 | `/auto_aim/result` | `std_msgs/msg/String` | best effort、volatile、keep last 1 |
+| 输入 | `/camera/image_raw` | `sensor_msgs/msg/Image` | best effort、volatile、keep last 1 |
+| 输入 | `/imu/data` | `sensor_msgs/msg/Imu` | best effort、volatile、keep last 1 |
+| 输出 | `/auto_aim/result` | `std_msgs/msg/String` | reliable、volatile、keep last 1 |
 
 可在 YAML 中修改话题名：
 
 ```yaml
-ros_image_topic: "/rm_video/image_processed"
-ros_imu_topic: "/custom_client/imu"
-ros_self_is_red_topic: "/custom_client/self_is_red"
+ros_image_topic: "/camera/image_raw"
+ros_imu_topic: "/imu/data"
 ros_result_topic: "/auto_aim/result"
 ```
-
-上表取自仓库当前的 `configs/AUVClient.yaml`。如果 YAML 省略字段，程序内置回退值分别为 `/camera/image_raw`、`/imu/data`、`/custom_client/self_is_red` 和 `/auto_aim/result`。
 
 发布端和 `auv_client` 预期位于同一主机。图像和 IMU 发布端应使用与订阅端兼容的传感器 QoS，并将队列深度设为 1。DDS 实现支持时，建议启用共享内存传输。
 
 ### 3.2 图像输入
 
-消息类型为 `sensor_msgs/msg/CompressedImage`。使用字段如下：
+消息类型为 `sensor_msgs/msg/Image`。使用字段如下：
 
 | 字段 | 要求 |
 |---|---|
 | `header.stamp` | 与 IMU 共用同一 ROS 时钟，表示上游完成对齐后的发布时间 |
 | `header.frame_id` | 当前版本不读取，不触发 TF 查询 |
-| `format` | 用于解码失败日志；不参与时间同步 |
-| `data` | 必须包含 OpenCV 可解码的完整压缩图像载荷 |
+| `height`、`width` | 必须大于 0，运行期间必须保持不变 |
+| `encoding` | 仅支持 `bgr8`、`rgb8`、`mono8` |
+| `step` | 不得小于 `width × 每像素字节数` |
+| `data` | 大小不得小于 `step × height` |
 
-`auv_client` 使用 OpenCV `imdecode(..., IMREAD_COLOR)` 解码，实际支持的 JPEG、PNG
-等格式取决于 OpenCV 构建。解码结果统一为三通道 BGR；空载荷、损坏载荷或当前 OpenCV
-不支持的压缩格式会被拒绝，并输出安全结果。
+编码处理方式：
 
-首个成功解码的图像决定本次运行的固定输入分辨率。实际输入可以与内参标定分辨率不同，但宽高比相对误差必须不超过 1%，此时程序按宽、高分别缩放 `fx`、`fy`、`cx`、`cy`，畸变参数保持不变。运行中改变解码后图像的分辨率会拒绝该帧并发布安全结果，不会跨分辨率延续 Tracker 状态。
+| 编码 | 处理 |
+|---|---|
+| `bgr8` | 直接在 ROS 消息缓冲区上建立 OpenCV 视图，不复制像素数据 |
+| `rgb8` | 转换为 BGR |
+| `mono8` | 扩展为三通道 BGR |
+| 其他编码 | 拒绝该帧并输出安全结果 |
+
+在 `bgr8` 零拷贝路径中，程序会一直持有原 ROS 消息的所有权，直至该帧处理完成；发布端仍不得在发布后修改消息内存。
+
+首个有效图像决定本次运行的固定输入分辨率。实际输入可以与内参标定分辨率不同，但宽高比相对误差必须不超过 1%，此时程序按宽、高分别缩放 `fx`、`fy`、`cx`、`cy`，畸变参数保持不变。运行中改变图像分辨率会拒绝该帧并发布安全结果，不会跨分辨率延续 Tracker 状态。
 
 ### 3.3 IMU 输入
 
@@ -112,23 +117,6 @@ ros_result_topic: "/auto_aim/result"
 ROS 消息中的四元数排列为 `x, y, z, w`。程序内部按 Eigen 的构造顺序 `w, x, y, z` 读入，并在使用前归一化。零四元数或模长过小的四元数无效。
 
 当前版本不使用 `tf2`，因此仅填写 `frame_id` 不能纠正 IMU 安装方向。安装轴向差异必须通过 `R_gimbal2imubody` 配置。
-
-### 3.4 己方阵营输入
-
-消息类型为 `std_msgs/msg/Bool`，默认话题为 `/custom_client/self_is_red`：
-
-| `data` | 己方阵营 | 自瞄目标颜色 |
-|---|---|---|
-| `true` | 红方 | 蓝色装甲板 |
-| `false` | 蓝方 | 红色装甲板 |
-
-该消息没有 `header`，以节点最新收到的值为准。`auv_client` 启动后、收到第一条阵营消息前，不使用 YAML 中的初始颜色执行自瞄，只发布 `control=false` 的安全结果。
-
-阵营值发生变化时，节点会立即发布一次安全结果、清空 Tracker 状态，并从后续图像中重新建立对应敌方颜色的目标。在某帧处理期间发生阵营切换时，该帧基于旧阵营计算出的结果也会被 revision 检查拒绝。
-
-阵营订阅使用 best effort、volatile、keep last 1。发布端应使用兼容的 QoS，并应在
-`auv_client` 启动后至少发布一次当前值。由于订阅端是 volatile，如果发布端只在状态变化时
-发布，应在发现订阅者后重发当前值，或周期性发布。
 
 ## 4. 输出帧格式
 
@@ -360,11 +348,10 @@ pitch = -(ballistic_elevation + pitch_offset)
 
 ### 7.1 ROS、同步和安全参数
 
-| 配置项 | 当前配置值 | 单位 | 说明 |
+| 配置项 | 默认值 | 单位 | 说明 |
 |---|---:|---|---|
-| `ros_image_topic` | `/rm_video/image_processed` | — | 图像输入话题 |
-| `ros_imu_topic` | `/custom_client/imu` | — | IMU 输入话题 |
-| `ros_self_is_red_topic` | `/custom_client/self_is_red` | — | 己方是否为红方的 Bool 输入话题 |
+| `ros_image_topic` | `/camera/image_raw` | — | 图像输入话题 |
+| `ros_imu_topic` | `/imu/data` | — | IMU 输入话题 |
 | `ros_result_topic` | `/auto_aim/result` | — | JSON 结果输出话题 |
 | `bullet_speed` | `23.0` | m/s | 弹丸初速，必须大于 0 |
 | `upstream_latency_ms` | `0.0` | ms | 采集到上游发布时间的固定估计延迟 |
@@ -398,11 +385,10 @@ t_camera2gimbal:  [tx, ty, tz]
 
 ### 7.4 自瞄与火控参数
 
-YOLOV5、Tracker、Aimer 和 Shooter 参数沿用项目原有 UAV 自瞄链路。默认检测模型为 `RobotDetectionModel/Model/0526.onnx`，输入为 640x640。该模型实测颜色输出顺序为蓝、红、灰、紫，因此 AUV 配置使用 `yolov5_color_order: blue_red_gray_purple`；未配置时保持原有的红、蓝、灰、紫顺序，避免影响其他 YOLOV5 模型。`device: AUTO` 会由 OpenVINO 选择可用设备。`enemy_color` 仍是 Tracker 构造所需的初始值，但 `auv_client` 在处理首帧前会使用 `ros_self_is_red_topic` 的值覆盖它；不得把该 YAML 项当作 AUV 运行时阵营来源。相关参数包括：
+`enemy_color`、Detector、Tracker、Aimer 和 Shooter 参数沿用项目原有 UAV 自瞄链路。与外部控制接口直接相关的参数包括：
 
 | 配置项 | 单位 | 说明 |
 |---|---|---|
-| `yolov5_color_order` | — | YOLOV5 颜色输出顺序；支持 `red_blue_gray_purple` 和 `blue_red_gray_purple` |
 | `yaw_offset` | degree | yaw 固定补偿 |
 | `pitch_offset` | degree | pitch/弹道固定补偿 |
 | `high_speed_delay_time` | s | 高转速目标附加预测时间 |
@@ -412,18 +398,18 @@ YOLOV5、Tracker、Aimer 和 Shooter 参数沿用项目原有 UAV 自瞄链路�
 | `judge_distance` | m | 近/远开火阈值切换距离 |
 | `auto_fire` | boolean | 是否允许输出 `shoot=true` |
 
-完整默认项和注释见 `configs/AUVClient.yaml`。
+完整默认项和注释见 `auto_aim/configs/AUVClient.yaml`。
 
 ## 8. 标定流程
 
-ROS 标定工具使用棋盘格，板参数配置在 `configs/calibration.yaml`：
+ROS 标定工具使用对称圆点阵列，板参数配置在 `auto_aim/configs/calibration.yaml`：
 
 ```yaml
 pattern_cols: 10
-pattern_rows: 6
-square_size_mm: 75
-ros_image_topic: "/rm_video/image_processed"
-ros_imu_topic: "/custom_client/imu"
+pattern_rows: 7
+center_distance_mm: 40
+ros_image_topic: "/camera/image_raw"
+ros_imu_topic: "/imu/data"
 ```
 
 ### 8.1 相机内参标定
@@ -431,8 +417,8 @@ ros_imu_topic: "/custom_client/imu"
 运行：
 
 ```bash
-./build/ros_calibrate_camera configs/calibration.yaml \
-  --output-folder=assets/ros_camera_calibration
+./build/auto_aim/ros_calibrate_camera auto_aim/configs/calibration.yaml \
+  --output-folder=auto_aim/assets/ros_camera_calibration
 ```
 
 操作流程：
@@ -442,7 +428,7 @@ ros_imu_topic: "/custom_client/imu"
 3. 让标定板覆盖画面中心、四角、远近位置和不同倾角，建议采集至少 10 帧。
 4. 按 `q` 结束采样并求解。
 
-输出目录包含采集图像和 `calibration_result.yaml`。将以下字段复制到 `configs/AUVClient.yaml`，也复制到手眼标定使用的 `configs/calibration.yaml`：
+输出目录包含采集图像和 `calibration_result.yaml`。将以下字段复制到 `auto_aim/configs/AUVClient.yaml`，也复制到手眼标定使用的 `auto_aim/configs/calibration.yaml`：
 
 - `calibration_image_width`
 - `calibration_image_height`
@@ -451,11 +437,11 @@ ros_imu_topic: "/custom_client/imu"
 
 ### 8.2 相机—云台手眼标定
 
-完成内参标定并将结果写入 `configs/calibration.yaml` 后运行：
+完成内参标定并将结果写入 `auto_aim/configs/calibration.yaml` 后运行：
 
 ```bash
-./build/ros_calibrate_handeye configs/calibration.yaml \
-  --output-folder=assets/ros_handeye_calibration
+./build/auto_aim/ros_calibrate_handeye auto_aim/configs/calibration.yaml \
+  --output-folder=auto_aim/assets/ros_handeye_calibration
 ```
 
 操作流程：
@@ -467,7 +453,7 @@ ros_imu_topic: "/custom_client/imu"
 5. 至少需要 3 组有效姿态，建议采集 10 组以上且旋转差异明显的姿态。
 6. 按 `q` 求解。
 
-输出目录包含图像、对应四元数文本和 `handeye_result.yaml`。将以下字段复制到 `configs/AUVClient.yaml`：
+输出目录包含图像、对应四元数文本和 `handeye_result.yaml`。将以下字段复制到 `auto_aim/configs/AUVClient.yaml`：
 
 - `R_gimbal2imubody`
 - `R_camera2gimbal`
@@ -483,9 +469,8 @@ ros_imu_topic: "/custom_client/imu"
 
 - 两条消息使用同一 ROS 时钟和一致的 `header.stamp` 语义。
 - 上游已经完成“某帧图像对应哪个姿态”的时间对齐。
-- 发布有效的 `sensor_msgs/msg/CompressedImage`，并保持解码后图像分辨率固定。
+- 图像保持固定分辨率，并使用 `bgr8`、`rgb8` 或 `mono8`。
 - IMU 发布 body 到 absolute/world 的有效、有限、非零四元数。
-- 阵营发布端在 `auv_client` 启动后发布至少一条当前 `self_is_red` 状态，并在阵营变化时及时更新。
 - 采用与 best-effort 传感器订阅兼容的 QoS，建议 depth 1。
 - 同机高带宽图像场景优先启用 DDS 共享内存，并检查实际 DDS 配置是否生效。
 
@@ -508,36 +493,9 @@ ros_imu_topic: "/custom_client/imu"
 
 ```bash
 ros2 node info /auv_client
-ros2 topic info --verbose /rm_video/image_processed
-ros2 topic info --verbose /custom_client/imu
-ros2 topic hz /rm_video/image_processed
-ros2 topic hz /custom_client/imu
-ros2 topic echo --qos-reliability best_effort /custom_client/self_is_red
-ros2 topic echo --qos-reliability best_effort /auto_aim/result
-```
-
-`auv_client` 已打印 `Using fixed input resolution` 时，表示至少已有一帧图像与 IMU
-成功配对并通过格式、时间戳和新鲜度检查。要继续观察处理链，可启用每秒一次的调试汇总：
-
-```bash
-./build/auv_client configs/AUVClient.yaml --debug
-```
-
-汇总包含六种输入读取状态、有效帧序号与延迟、IMU yaw/pitch/roll、装甲板数、
-Tracker 状态、目标数以及最终控制命令。需要查看完整自瞄调试画面时使用：
-
-```bash
-./build/auv_client configs/AUVClient.yaml --debug --show
-```
-
-`--show` 会显示 YOLO 观测装甲板、EKF 预测模型和最终瞄准装甲板，左上角显示
-目标类型、旋转角速度和 Tracker 状态。窗口支持保持图像宽高比拖动缩放，按 `q`、
-`Q` 或 `Esc` 退出。该选项需要图形环境；在无桌面的部署环境只使用 `--debug`。
-如果调试工具明确要求 best-effort QoS，可用下列命令强制匹配传感器话题：
-
-```bash
-ros2 topic echo --qos-reliability best_effort /rm_video/image_processed --field header
-ros2 topic echo --qos-reliability best_effort /custom_client/imu --field header
+ros2 topic info --verbose /camera/image_raw
+ros2 topic info --verbose /imu/data
+ros2 topic echo /auto_aim/result
 ```
 
 常见问题：
@@ -545,10 +503,9 @@ ros2 topic echo --qos-reliability best_effort /custom_client/imu --field header
 | 现象 | 可能原因 | 处理 |
 |---|---|---|
 | CMake 不生成 `auv_client` | ROS 环境未 source，或缺少标准消息包 | source ROS 2 后重新执行 CMake，检查 `rclcpp/sensor_msgs/std_msgs` |
-| 启动立即退出 | 标定宽高为 0、YAML 缺字段或时间参数非法 | 写入真实标定尺寸并检查 `configs/AUVClient.yaml` |
-| 一直输出 `control=false` | 未收到阵营、无目标、图像非法、IMU 无效、配对失败或帧过期 | 查看日志，并分别 echo 三个输入话题 |
-| 日志一直等待己方阵营 | Bool 发布端未重发、话题名错误或 QoS 不兼容 | 以 best-effort QoS 检查 `/custom_client/self_is_red`，确保发布端在客户端启动后发送当前值 |
-| 图像有数据但节点拒绝 | 压缩载荷损坏、OpenCV 不支持该压缩格式、宽高比或运行时尺寸不符合约定 | 使用 JPEG/PNG 等可解码格式并固定解码分辨率 |
+| 启动立即退出 | 标定宽高为 0、YAML 缺字段或时间参数非法 | 写入真实标定尺寸并检查 `auto_aim/configs/AUVClient.yaml` |
+| 一直输出 `control=false` | 无目标、图像非法、IMU 无效、配对失败或帧过期 | 查看日志，并分别 echo 两个输入话题 |
+| 图像有数据但节点拒绝 | 编码、`step/data`、宽高比或运行时尺寸不符合约定 | 改为受支持编码并固定分辨率 |
 | 经常提示 IMU 无法匹配 | 两路时钟/时间戳语义不一致或容差过小 | 修正上游对齐，测量时间差后谨慎调整同步参数 |
 | 提示图像过期 | ROS 时钟不同步、处理堵塞或上游延迟未配置合理 | 统一时钟，降低队列深度，检查 `upstream_latency_ms` 和帧率 |
 | yaw/pitch 方向错误 | IMU 四元数方向、NED/ENU 或外参轴向错误 | 按第 6 节逐级验证 `R_gimbal2imubody` 和 `R_camera2gimbal` |
