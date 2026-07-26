@@ -32,6 +32,8 @@ std::int64_t steady_now_ns()
 }
 
 Command safe_command() { return {false, false, 0.0, 0.0, 0.0}; }
+
+rclcpp::Logger auto_aim_logger() { return rclcpp::get_logger("auto_aim"); }
 }  // namespace
 
 AUVClient::AUVClient(const std::string & config_path)
@@ -45,8 +47,8 @@ AUVClient::AUVClient(const std::string & config_path)
   const auto imu_topic = yaml_value_or<std::string>(yaml, "ros_imu_topic", "/imu/data");
   const auto result_topic =
     yaml_value_or<std::string>(yaml, "ros_result_topic", "/auto_aim/result");
-  const auto self_is_red_topic = yaml_value_or<std::string>(
-    yaml, "ros_self_is_red_topic", "/rm_mqtt/self_is_red");
+  const auto self_is_red_topic =
+    yaml_value_or<std::string>(yaml, "ros_self_is_red_topic", "/rm_mqtt/self_is_red");
 
   bullet_speed_ = yaml_value_or<double>(yaml, "bullet_speed", 23.0);
   upstream_latency_ms_ = yaml_value_or<double>(yaml, "upstream_latency_ms", 0.0);
@@ -93,8 +95,8 @@ AUVClient::AUVClient(const std::string & config_path)
   spin_thread_ = std::thread([this]() { executor_.spin(); });
 
   RCLCPP_INFO(
-    node_->get_logger(), "AUVClient started: image=%s imu=%s self_is_red=%s result=%s",
-    image_topic.c_str(), imu_topic.c_str(), self_is_red_topic.c_str(), result_topic.c_str());
+    auto_aim_logger(), "Started: image=%s imu=%s self_is_red=%s result=%s", image_topic.c_str(),
+    imu_topic.c_str(), self_is_red_topic.c_str(), result_topic.c_str());
 }
 
 AUVClient::~AUVClient()
@@ -146,7 +148,7 @@ void AUVClient::self_is_red_callback(BoolMsg::ConstSharedPtr msg)
   }
 
   RCLCPP_INFO(
-    node_->get_logger(), "Team color updated: self=%s enemy=%s", msg->data ? "red" : "blue",
+    auto_aim_logger(), "Team color updated: self=%s enemy=%s", msg->data ? "red" : "blue",
     msg->data ? "blue" : "red");
 
   // Immediately revoke any command produced for the previous team color.
@@ -189,14 +191,14 @@ AUVReadStatus AUVClient::convert_image(const ImageMsg::ConstSharedPtr & msg, AUV
     frame.image = cv::imdecode(msg->data, cv::IMREAD_COLOR);
   } catch (const cv::Exception & e) {
     RCLCPP_WARN_THROTTLE(
-      node_->get_logger(), *node_->get_clock(), 1000, "Failed to decode compressed image: %s",
+      auto_aim_logger(), *node_->get_clock(), 1000, "Failed to decode compressed image: %s",
       e.what());
     return AUVReadStatus::invalid_image;
   }
 
   if (frame.image.empty()) {
     RCLCPP_WARN_THROTTLE(
-      node_->get_logger(), *node_->get_clock(), 1000,
+      auto_aim_logger(), *node_->get_clock(), 1000,
       "Compressed image payload could not be decoded (format: %s)", msg->format.c_str());
     return AUVReadStatus::invalid_image;
   }
@@ -272,7 +274,7 @@ AUVReadStatus AUVClient::read(AUVFrame & frame)
   auto ros_age_ms = static_cast<double>(ros_now.nanoseconds() - source_time.nanoseconds()) / 1e6;
   if (ros_age_ms < -sync_tolerance_ms_) {
     RCLCPP_WARN_THROTTLE(
-      node_->get_logger(), *node_->get_clock(), 1000, "Image timestamp is %.3f ms in the future",
+      auto_aim_logger(), *node_->get_clock(), 1000, "Image timestamp is %.3f ms in the future",
       -ros_age_ms);
     return AUVReadStatus::stale;
   }
@@ -280,7 +282,7 @@ AUVReadStatus AUVClient::read(AUVFrame & frame)
   const auto effective_age_ms = ros_age_ms + upstream_latency_ms_;
   if (effective_age_ms > max_frame_age_ms_) {
     RCLCPP_WARN_THROTTLE(
-      node_->get_logger(), *node_->get_clock(), 1000, "Dropping stale image: effective age %.3f ms",
+      auto_aim_logger(), *node_->get_clock(), 1000, "Dropping stale image: effective age %.3f ms",
       effective_age_ms);
     return AUVReadStatus::stale;
   }
@@ -317,8 +319,7 @@ void AUVClient::publish_json(const Command & command, const builtin_interfaces::
 }
 
 void AUVClient::publish(
-  const Command & command, const AUVFrame * frame,
-  std::optional<std::uint64_t> team_color_revision)
+  const Command & command, const AUVFrame * frame, std::optional<std::uint64_t> team_color_revision)
 {
   std::lock_guard<std::mutex> lock(result_mutex_);
   bool team_color_is_current = true;
@@ -334,7 +335,7 @@ void AUVClient::publish(
   } else {
     if (!command_is_finite) {
       RCLCPP_WARN_THROTTLE(
-        node_->get_logger(), *node_->get_clock(), 1000,
+        auto_aim_logger(), *node_->get_clock(), 1000,
         "Non-finite auto-aim command rejected; publishing a safe result");
     }
     publish_json(safe_command(), frame ? &frame->source_stamp : nullptr);

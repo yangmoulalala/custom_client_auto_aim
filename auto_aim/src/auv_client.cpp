@@ -21,7 +21,6 @@
 #include "tasks/auto_aim/tracker.hpp"
 #include "tasks/auto_aim/yolo.hpp"
 #include "tools/img_tools.hpp"
-#include "tools/logger.hpp"
 #include "tools/math_tools.hpp"
 
 const std::string keys =
@@ -229,22 +228,27 @@ int main(int argc, char * argv[])
     return 0;
   }
 
+  rclcpp::init(argc, argv);
+  const auto logger = rclcpp::get_logger("auto_aim");
+
   try {
     const auto yaml = YAML::LoadFile(config_path);
     const auto calibration_width = yaml["calibration_image_width"].as<int>(0);
     const auto calibration_height = yaml["calibration_image_height"].as<int>(0);
     if (calibration_width <= 0 || calibration_height <= 0) {
-      tools::logger()->error(
-        "[AUVClient] calibration_image_width and calibration_image_height must be set to the "
-        "resolution used by camera_matrix");
+      RCLCPP_ERROR(
+        logger,
+        "calibration_image_width and calibration_image_height must be set to the resolution "
+        "used by camera_matrix");
+      rclcpp::shutdown();
       return 1;
     }
   } catch (const std::exception & e) {
-    tools::logger()->error("[AUVClient] Failed to load configuration: {}", e.what());
+    RCLCPP_ERROR(logger, "Failed to load configuration: %s", e.what());
+    rclcpp::shutdown();
     return 1;
   }
 
-  rclcpp::init(argc, argv);
   int exit_code = 0;
 
   try {
@@ -268,12 +272,15 @@ int main(int argc, char * argv[])
       if (read_status != io::AUVReadStatus::ok) {
         const auto now = std::chrono::steady_clock::now();
         if (debug && tools::delta_time(now, last_debug_report) >= 1.0) {
-          tools::logger()->info(
-            "[AUVClient][debug] input ok={} timeout={} stale={} unmatched_imu={} "
-            "invalid_image={} invalid_imu={}; last_status={}",
-            read_status_counts[0], read_status_counts[1], read_status_counts[2],
-            read_status_counts[3], read_status_counts[4], read_status_counts[5],
-            read_status_name(read_status));
+          RCLCPP_INFO(
+            logger, "%s",
+            fmt::format(
+              "input ok={} timeout={} stale={} unmatched_imu={} invalid_image={} "
+              "invalid_imu={}; last_status={}",
+              read_status_counts[0], read_status_counts[1], read_status_counts[2],
+              read_status_counts[3], read_status_counts[4], read_status_counts[5],
+              read_status_name(read_status))
+              .c_str());
           read_status_counts.fill(0);
           last_debug_report = now;
         }
@@ -288,7 +295,7 @@ int main(int argc, char * argv[])
         static auto last_warning = std::chrono::steady_clock::time_point::min();
         const auto now = std::chrono::steady_clock::now();
         if (tools::delta_time(now, last_warning) >= 1.0) {
-          tools::logger()->warn("[AUVClient] Waiting for self team color; publishing safe results");
+          RCLCPP_WARN(logger, "Waiting for self team color; publishing safe results");
           last_warning = now;
         }
         client.publish({false, false, 0.0, 0.0, 0.0}, &frame);
@@ -300,15 +307,15 @@ int main(int argc, char * argv[])
           team_color->self_is_red ? auto_aim::Color::blue : auto_aim::Color::red;
         tracker.set_enemy_color(enemy_color);
         active_self_is_red = team_color->self_is_red;
-        tools::logger()->info(
-          "[AUVClient] Self team is {}; targeting {} armors",
-          team_color->self_is_red ? "red" : "blue", team_color->self_is_red ? "blue" : "red");
+        RCLCPP_INFO(
+          logger, "Self team is %s; targeting %s armors", team_color->self_is_red ? "red" : "blue",
+          team_color->self_is_red ? "blue" : "red");
       }
 
       if (input_size.empty()) {
         if (!solver.set_image_size(frame.image.size())) {
-          tools::logger()->error(
-            "[AUVClient] Input resolution {}x{} is incompatible with camera calibration",
+          RCLCPP_ERROR(
+            logger, "Input resolution %dx%d is incompatible with camera calibration",
             frame.image.cols, frame.image.rows);
           client.publish({false, false, 0.0, 0.0, 0.0}, &frame);
           exit_code = 1;
@@ -316,14 +323,14 @@ int main(int argc, char * argv[])
         }
         input_size = frame.image.size();
         if (show) initialize_debug_window(input_size);
-        tools::logger()->info(
-          "[AUVClient] Using fixed input resolution {}x{}", input_size.width, input_size.height);
+        RCLCPP_INFO(
+          logger, "Using fixed input resolution %dx%d", input_size.width, input_size.height);
       } else if (frame.image.size() != input_size) {
         static auto last_warning = std::chrono::steady_clock::time_point::min();
         const auto now = std::chrono::steady_clock::now();
         if (tools::delta_time(now, last_warning) >= 1.0) {
-          tools::logger()->warn(
-            "[AUVClient] Resolution changed from {}x{} to {}x{}; frame rejected", input_size.width,
+          RCLCPP_WARN(
+            logger, "Resolution changed from %dx%d to %dx%d; frame rejected", input_size.width,
             input_size.height, frame.image.cols, frame.image.rows);
           last_warning = now;
         }
@@ -348,16 +355,19 @@ int main(int argc, char * argv[])
           std::chrono::duration<double, std::milli>(now - frame.timestamp).count();
         const auto processing_ms =
           std::chrono::duration<double, std::milli>(now - iteration_start).count();
-        tools::logger()->info(
-          "[AUVClient][debug] frame={} input(ok={} timeout={} stale={} unmatched_imu={} "
-          "invalid_image={} invalid_imu={}) age_ms={:.2f} imu_ypr_deg=[{:.2f},{:.2f},{:.2f}] "
-          "armors={} tracker={} targets={} command(control={} shoot={} yaw_deg={:.2f} "
-          "pitch_deg={:.2f} distance_m={:.2f}) processing_ms={:.2f}",
-          frame_count, read_status_counts[0], read_status_counts[1], read_status_counts[2],
-          read_status_counts[3], read_status_counts[4], read_status_counts[5], frame_age_ms,
-          gimbal_ypr[0] * 57.3, gimbal_ypr[1] * 57.3, gimbal_ypr[2] * 57.3, armors.size(),
-          tracker.state(), targets.size(), command.control, command.shoot, command.yaw * 57.3,
-          command.pitch * 57.3, command.horizon_distance, processing_ms);
+        RCLCPP_INFO(
+          logger, "%s",
+          fmt::format(
+            "frame={} input(ok={} timeout={} stale={} unmatched_imu={} invalid_image={} "
+            "invalid_imu={}) age_ms={:.2f} imu_ypr_deg=[{:.2f},{:.2f},{:.2f}] armors={} "
+            "tracker={} targets={} command(control={} shoot={} yaw_deg={:.2f} pitch_deg={:.2f} "
+            "distance_m={:.2f}) processing_ms={:.2f}",
+            frame_count, read_status_counts[0], read_status_counts[1], read_status_counts[2],
+            read_status_counts[3], read_status_counts[4], read_status_counts[5], frame_age_ms,
+            gimbal_ypr[0] * 57.3, gimbal_ypr[1] * 57.3, gimbal_ypr[2] * 57.3, armors.size(),
+            tracker.state(), targets.size(), command.control, command.shoot, command.yaw * 57.3,
+            command.pitch * 57.3, command.horizon_distance, processing_ms)
+            .c_str());
         read_status_counts.fill(0);
         last_debug_report = now;
       }
@@ -371,7 +381,7 @@ int main(int argc, char * argv[])
       }
     }
   } catch (const std::exception & e) {
-    tools::logger()->error("[AUVClient] Fatal error: {}", e.what());
+    RCLCPP_ERROR(logger, "Fatal error: %s", e.what());
     exit_code = 1;
   }
 
