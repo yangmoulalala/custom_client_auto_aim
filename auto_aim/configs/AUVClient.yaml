@@ -10,7 +10,7 @@ ros_debug_topic: "/auto_aim/debug"
 bullet_speed: 24.0
 # 图像曝光/采集到上游发布时间之间未体现在 header.stamp 中的固定延迟，单位 ms。
 # 增大后会增加预测前推量，但不会改变相邻帧的 Tracker 时间间隔。
-upstream_latency_ms: 00.0
+upstream_latency_ms: 150.0
 
 # 必须填写为下方 camera_matrix 标定时使用的图像分辨率。
 # 保持为 0 时 auv_client 会拒绝启动，避免使用错误内参。

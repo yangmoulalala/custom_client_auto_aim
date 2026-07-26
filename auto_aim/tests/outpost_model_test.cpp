@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "tasks/auto_aim/aimer.hpp"
+#include "tasks/auto_aim/shooter.hpp"
 #include "tasks/auto_aim/target.hpp"
 #include "tools/math_tools.hpp"
 
@@ -18,6 +19,7 @@ using auto_aim::ArmorPriority;
 using auto_aim::Aimer;
 using auto_aim::OUTPOST_HEIGHT_STEP;
 using auto_aim::OUTPOST_RADIUS;
+using auto_aim::Shooter;
 using auto_aim::Target;
 
 int failures = 0;
@@ -112,17 +114,29 @@ void test_partial_and_complete_selection()
 
   auto initial_front = make_outpost_target(0, BASE_Z);
   Aimer initial_front_aimer(OUTPOST_MODEL_TEST_CONFIG);
-  const auto initial_front_command = initial_front_aimer.aim({initial_front}, timestamp, 23.0, false);
+  const auto initial_front_command =
+    initial_front_aimer.aim({initial_front}, timestamp, 23.0, false);
   expect(initial_front_command.control, "stationary frontal outpost armor must be controllable");
   expect(initial_front_aimer.debug_aim_point.valid, "frontal outpost armor must permit firing");
+  Shooter shooter(OUTPOST_MODEL_TEST_CONFIG);
+  expect(
+    shooter.shoot(
+      initial_front_command, initial_front_aimer, {initial_front}, Eigen::Vector3d::Zero()),
+    "stationary frontal outpost armor must pass the firing gate");
 
   constexpr double OUTSIDE_ANGLE = 40.0 * CV_PI / 180.0;
   auto initial_outside = make_outpost_target(OUTSIDE_ANGLE, BASE_Z);
   Aimer initial_outside_aimer(OUTPOST_MODEL_TEST_CONFIG);
   const auto initial_outside_command =
     initial_outside_aimer.aim({initial_outside}, timestamp, 23.0, false);
-  expect(!initial_outside_command.control, "initial armor outside 30 degrees must not be controlled");
-  expect(!initial_outside_aimer.debug_aim_point.valid, "initial outside armor must not permit firing");
+  expect(
+    !initial_outside_command.control, "initial armor outside 30 degrees must not be controlled");
+  expect(
+    !initial_outside_aimer.debug_aim_point.valid, "initial outside armor must not permit firing");
+  expect(
+    !shooter.shoot(
+      initial_outside_command, initial_outside_aimer, {initial_outside}, Eigen::Vector3d::Zero()),
+    "initial outside armor must fail the firing gate");
 
   constexpr double INITIAL_ANGLE = -2 * CV_PI / 3;
   auto partial = make_outpost_target(INITIAL_ANGLE, BASE_Z);
@@ -165,7 +179,9 @@ void test_bidirectional_delay()
 
   const auto positive_command = positive_aimer.aim({positive}, timestamp, 23.0, false);
   const auto negative_command = negative_aimer.aim({negative}, timestamp, 23.0, false);
-  expect(positive_command.control && negative_command.control, "both spin directions must be controllable");
+  expect(
+    positive_command.control && negative_command.control,
+    "both spin directions must be controllable");
   expect_near(
     positive_command.yaw, -negative_command.yaw, 1e-9,
     "equal absolute spin speeds must use symmetric delay prediction");
@@ -197,7 +213,12 @@ void test_speed_snap()
   const auto low_speed = tracked_outpost(1.5);
   expect(
     low_speed.ekf_x()[7] > 1.0 && low_speed.ekf_x()[7] < 2.0,
-    "outpost speed below 2 rad/s must not snap");
+    "positive outpost speed below 2 rad/s must not snap");
+
+  const auto negative_low_speed = tracked_outpost(-1.5);
+  expect(
+    negative_low_speed.ekf_x()[7] < -1.0 && negative_low_speed.ekf_x()[7] > -2.0,
+    "negative outpost speed below 2 rad/s must not snap or change direction");
 
   const auto positive = tracked_outpost(3.0);
   expect_near(positive.ekf_x()[7], 2.51, 1e-6, "positive high speed must snap to 2.51 rad/s");
