@@ -4,7 +4,7 @@ ros_imu_topic: "/custom_client/imu"
 ros_result_topic: "/auto_aim/result"
 
 bullet_speed: 23.0
-upstream_latency_ms: 100.0
+upstream_latency_ms: 160.0
 
 # 必须填写为下方 camera_matrix 标定时使用的图像分辨率。
 # 保持为 0 时 auv_client 会拒绝启动，避免使用错误内参。
