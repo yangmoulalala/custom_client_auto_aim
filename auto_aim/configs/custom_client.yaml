@@ -1,0 +1,117 @@
+#####-----ROS2 Custom Client-----#####
+# 参数只在启动时读取；实时话题均为 best-effort、keep last 1。
+# 处理后 JPEG 图像；标定参数必须对应此话题的画面。
+ros_image_topic: "/rm_video/image_processed"
+# IMU 四元数；与图像使用同一 ROS 时钟，仅做最近邻配对，不插值。
+ros_imu_topic: "/rm_mqtt/imu"
+# 己方阵营；true=己方红/目标蓝，false=己方蓝/目标红。未收到时只输出安全命令。
+ros_self_is_red_topic: "/rm_mqtt/self_is_red"
+# JSON 控制结果；yaw_rad/pitch_rad 单位为 rad。
+ros_result_topic: "/auto_aim/result"
+# 调试 JPEG；无订阅者时不编码。
+ros_debug_topic: "/auto_aim/debug"
+
+#####-----输入时间与弹速-----#####
+# 弹丸初速，m/s，正有限数；影响弹道下坠和飞行时间。小于 14 时 Aimer 会改用 23。
+bullet_speed: 24.0
+# header.stamp 未包含的固定图像延迟，ms，范围 [0,max_frame_age_ms)；增大将增加预测前推量。
+# 不修改 ROS 时间戳，不参与图像/IMU 配对，也不改变 Tracker 相邻帧 dt。
+upstream_latency_ms: 150.0
+
+# camera_matrix 标定图像尺寸，pixel，正整数。运行画面可同比缩放，宽高比误差不得超过 1%。
+calibration_image_width: 480
+calibration_image_height: 270
+
+# 图像与最近 IMU 的最大时间差，ms，非负；增大可减少未匹配帧，但会增加姿态错配。
+sync_tolerance_ms: 500
+# 等待合格 IMU 的最长时间，ms，非负；不改变 sync_tolerance_ms，增大会增加最坏延迟。
+sync_wait_ms: 500
+# 最大有效帧龄，ms，正数且大于 upstream_latency_ms。
+# effective_age=now-header.stamp+upstream_latency_ms，超限时丢帧。
+max_frame_age_ms: 500
+# 新图像等待和安全看门狗超时，ms，正数；超时发布一次 control=false、shoot=false。
+command_timeout_ms: 500
+# 当前 500 ms 为宽松联调值，应根据 rosbag 时间差、帧率和允许失效时间分别收紧。
+
+# Tracker 初始目标颜色，red/blue；收到阵营消息后自动改为对方颜色并重置 Tracker。
+enemy_color: "red"
+# enemy_color: "blue"
+
+#####-----神经网络参数-----#####
+# 检测器类型；当前只支持 yolov5。
+yolo_name: yolov5
+# 模型路径；要求 FP16 [1,3,640,640] 输入、FP32 [1,25200,22] 输出。
+yolov5_model_path: auto_aim/models/0526.onnx
+# 模型颜色通道顺序；只支持下列两种值。0526.onnx 实测为蓝、红、灰、紫。
+yolov5_color_order: blue_red_gray_purple
+# 推理设备，CPU/GPU；GPU Provider 不可用或节点回退 CPU 时启动失败。
+device: GPU
+# 第 8 列目标存在分数的阈值，范围 [0,1]；提高可减少误检，但会增加漏检。
+# 内部先固定过滤 score<0.7，因此配置低于 0.7 不会放宽检测。
+min_confidence: 0.8
+
+#####-----ROI-----#####
+# YOLO 内部裁剪，坐标基于 ros_image_topic 画面，单位 pixel；检测结果会加回 x/y 偏移。
+# x/y>=0；width/height 为 -1 或正数，-1 表示从 x/y 延伸到该维边界，显式尺寸不得越界。
+roi:
+  x: 0
+  y: 0
+  width: -1
+  height: -1
+# true 仅推理 ROI，可提高局部目标像素占比，但区域外目标不可见；false 使用整图。
+use_roi: false
+
+#####-----tracker参数-----#####
+# detecting 进入 tracking 所需的连续匹配帧数，正整数；只改变状态确认时间。
+# 当前 detecting 首帧已返回目标，因此该参数不是起控或开火延迟门。
+min_detect_count: 5
+# 普通目标连续未匹配时保留预测的帧数；增大可跨过遮挡，也会延长无观测控制。
+# 相邻帧时间差超过 0.1 s 时 Tracker 仍会直接重置。
+max_temp_lost_count: 5
+# 前哨站连续未匹配时保留预测的帧数。
+outpost_max_temp_lost_count: 10
+
+#####-----aimer参数-----#####
+# yaw 固定补偿，degree；正值使输出 yaw 增大。仅用于稳定系统偏差。
+yaw_offset: 0
+# pitch 固定补偿，degree；输出为 -(弹道仰角+pitch_offset)，正值使输出更负。
+pitch_offset: 0
+# 普通目标小陀螺选板窗口，degree；delta=预测装甲朝向-车中心视线方向。
+# w>0: -comming<=delta<leaving；w<0: -leaving<delta<=comming。建议 0<=leaving<=comming<=180。
+# comming 增大将更早选中进入侧，leaving 增大将更晚放弃离开侧；前哨站固定使用 70/30。
+comming_angle: 60
+leaving_angle: 60
+# 小陀螺选板角速度阈值，rad/s，非负有限数。
+# |w|<=阈值使用正面 +/-60 degree 锁定选板；|w|>阈值使用 comming/leaving。
+min_spin_speed: 2
+# 附加预测时间的速度阈值，rad/s；|w|>该值用 high，否则用 low。与 min_spin_speed 无关。
+# 当前 high/low 相同，因此 decision_speed 当前不影响结果。
+decision_speed: 12
+# 高/低速附加预测时间，s；增大使瞄点沿目标运动方向前移。
+# 总前推还包含图像有效帧龄和弹丸飞行时间。
+high_speed_delay_time: 0.0
+low_speed_delay_time: 0.0
+
+#####-----shooter参数-----#####
+# 水平距离<=judge_distance 时的 yaw 开火容差，degree；增大更易开火，也会增大误差。
+first_tolerance: 2.5
+# 水平距离>judge_distance 时的 yaw 开火容差，degree。
+second_tolerance: 2.5
+# 近/远容差切换距离，m，使用目标中心水平距离；两容差相同时此参数无效。
+judge_distance: 0.5
+# 自瞄开火开关；false 仍输出角度，但 shoot=false。适配器还有 control.allow_fire 二次门控。
+# 当前 Shooter 只检查 yaw、不检查 pitch，且首条正前方命令可能通过；实弹验证前应设 false。
+auto_fire: true
+
+#####-----相机标定参数-----#####
+# 数组按行展开；旋转矩阵应正交且 det=+1。
+# gimbal 轴到 IMU body 轴的 3x3 旋转，由安装方向确定，不由手眼标定求解。
+R_gimbal2imubody: [1, 0, 0, 0, 1, 0, 0, 0, 1]
+# OpenCV 3x3 内参 [fx,0,cx,0,fy,cy,0,0,1]，对应标定分辨率，单位 pixel。
+camera_matrix: [689.17782867242408, 0, 263.03005188708039, 0, 688.65887141546, 139.58627690456646, 0, 0, 1]
+# OpenCV 五参数畸变 [k1,k2,p1,p2,k3]。
+distort_coeffs: [-0.27214187315547, 1.4224009167280049, 0.0045267040990549148, 0.0055930843150677383, 0]
+# camera optical（x右、y下、z前）到 gimbal 的 3x3 旋转。
+R_camera2gimbal: [0.014679100551504121, -0.025612577151355564, 0.99956416497324696, -0.99933044887885791, 0.033130661636021852, 0.015524599934928607, -0.033513847146798559, -0.99912279282940253, -0.025109099908115606]
+# 相机光心在 gimbal 坐标中的位置 [x,y,z]，m；p_gimbal=R*p_camera+t。
+t_camera2gimbal: [-0.011407068198318614, -0.044912968154257979, 0.041049026928921747]

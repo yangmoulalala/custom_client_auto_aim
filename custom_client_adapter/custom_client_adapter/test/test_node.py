@@ -36,11 +36,41 @@ def make_payload() -> bytes:
     return CustomByteBlock(data=bytes(data)).SerializeToString()
 
 
-def test_missing_client_id_fails_immediately(monkeypatch):
+def test_client_id_is_internal_and_connection_defaults_are_declared(monkeypatch):
     monkeypatch.setattr(MqttTransport, 'start', lambda self: None)
     rclpy.init()
+    node = None
     try:
-        with pytest.raises(ValueError, match='Required ROS parameter mqtt.client_id'):
+        node = RmMqttNode()
+        assert not node.has_parameter('mqtt.client_id')
+        assert node.get_parameter('mqtt.reconnect_interval_sec').value == 0.1
+        assert node.get_parameter('mqtt.tcp_connect_timeout_sec').value == 1.0
+        assert node.get_parameter('mqtt.connack_timeout_sec').value == 1.0
+    finally:
+        if node is not None:
+            node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
+
+
+@pytest.mark.parametrize(
+    'parameter_name',
+    [
+        'mqtt.reconnect_interval_sec',
+        'mqtt.tcp_connect_timeout_sec',
+        'mqtt.connack_timeout_sec',
+    ],
+)
+def test_connection_timing_parameters_must_be_positive(
+    monkeypatch,
+    parameter_name,
+):
+    monkeypatch.setattr(MqttTransport, 'start', lambda self: None)
+    rclpy.init(
+        args=['--ros-args', '-p', f'{parameter_name}:=0.0'],
+    )
+    try:
+        with pytest.raises(ValueError, match='positive and finite'):
             RmMqttNode()
     finally:
         if rclpy.ok():
@@ -50,15 +80,7 @@ def test_missing_client_id_fails_immediately(monkeypatch):
 def test_callback_publishes_both_topics_with_timestamp_offset(monkeypatch):
     monkeypatch.setattr(MqttTransport, 'start', lambda self: None)
     monkeypatch.setattr(MqttTransport, 'stop', lambda self: None)
-    rclpy.init(
-        args=[
-            '--ros-args',
-            '-p',
-            'mqtt.client_id:="3"',
-            '-p',
-            'timestamp_offset_sec:=0.25',
-        ]
-    )
+    rclpy.init(args=['--ros-args', '-p', 'timestamp_offset_sec:=0.25'])
     node = None
     try:
         node = RmMqttNode()
@@ -116,7 +138,7 @@ def test_control_callback_publishes_radians_and_drops_excess_rate(monkeypatch):
         'publish',
         lambda self, topic, payload: publications.append((topic, payload)),
     )
-    rclpy.init(args=['--ros-args', '-p', 'mqtt.client_id:="3"'])
+    rclpy.init()
     node = None
     try:
         node = RmMqttNode()
@@ -157,7 +179,7 @@ def test_control_callback_does_nothing_while_disconnected(monkeypatch):
         'publish',
         lambda self, topic, payload: publications.append((topic, payload)),
     )
-    rclpy.init(args=['--ros-args', '-p', 'mqtt.client_id:="3"'])
+    rclpy.init()
     node = None
     try:
         node = RmMqttNode()
@@ -177,7 +199,7 @@ def test_control_callback_does_nothing_while_disconnected(monkeypatch):
 def test_control_callback_counts_invalid_json(monkeypatch):
     monkeypatch.setattr(MqttTransport, 'start', lambda self: None)
     monkeypatch.setattr(MqttTransport, 'stop', lambda self: None)
-    rclpy.init(args=['--ros-args', '-p', 'mqtt.client_id:="3"'])
+    rclpy.init()
     node = None
     try:
         node = RmMqttNode()

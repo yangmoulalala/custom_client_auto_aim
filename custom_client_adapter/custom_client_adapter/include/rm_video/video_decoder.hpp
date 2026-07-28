@@ -11,20 +11,21 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <rclcpp/logger.hpp>
 #include <string>
 #include <thread>
 #include <vector>
-
-#include <rclcpp/logger.hpp>
 
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libswscale/swscale.h>
 }
 
-namespace rm_video {
+namespace rm_video
+{
 
-struct DecoderConfig {
+struct DecoderConfig
+{
   std::string bind_address;
   int port;
   int receive_buffer_bytes;
@@ -37,36 +38,39 @@ struct DecoderConfig {
   std::chrono::milliseconds reassembly_timeout;
 };
 
-struct DecodedFrame {
+struct DecodedFrame
+{
   int width = 0;
   int height = 0;
   std::vector<std::uint8_t> bgr;
 };
 
-struct Statistics {
+struct Statistics
+{
   std::uint64_t decoded_frames = 0;
   std::uint64_t udp_packets = 0;
   std::uint64_t dropped = 0;
   std::uint64_t error = 0;
 };
 
-class VideoDecoder {
+class VideoDecoder
+{
 public:
   using FrameCallback = std::function<void(DecodedFrame &&)>;
 
-  VideoDecoder(DecoderConfig config, FrameCallback callback,
-               rclcpp::Logger logger);
+  VideoDecoder(DecoderConfig config, FrameCallback callback, rclcpp::Logger logger);
   ~VideoDecoder();
 
   VideoDecoder(const VideoDecoder &) = delete;
-  VideoDecoder &operator=(const VideoDecoder &) = delete;
+  VideoDecoder & operator=(const VideoDecoder &) = delete;
 
   bool start();
   void stop();
   Statistics take_statistics();
 
 private:
-  struct FrameAssembly {
+  struct FrameAssembly
+  {
     std::uint16_t frame_sequence = 0;
     std::uint32_t total_size = 0;
     std::size_t received_size = 0;
@@ -77,15 +81,17 @@ private:
     void reset();
   };
 
-  struct PendingFrame {
+  struct PendingFrame
+  {
     std::vector<std::uint8_t> data;
     std::size_t packet_count = 0;
     std::uint16_t frame_sequence = 0;
     bool discontinuity = false;
   };
 
-  struct AvFrameDeleter {
-    void operator()(AVFrame *frame) const { av_frame_free(&frame); }
+  struct AvFrameDeleter
+  {
+    void operator()(AVFrame * frame) const { av_frame_free(&frame); }
   };
   using AvFramePtr = std::unique_ptr<AVFrame, AvFrameDeleter>;
 
@@ -93,16 +99,15 @@ private:
   bool setup_socket();
   void receive_loop();
   void decode_loop();
-  void process_datagram(const std::uint8_t *data, std::size_t size);
-  FrameAssembly &get_or_create_assembly(std::uint16_t frame_sequence,
-                                        std::uint32_t total_size);
+  void process_datagram(const std::uint8_t * data, std::size_t size);
+  FrameAssembly & get_or_create_assembly(std::uint16_t frame_sequence, std::uint32_t total_size);
   void expire_assemblies(std::chrono::steady_clock::time_point now);
   void submit_frame(PendingFrame frame);
   void decode_frame(PendingFrame frame);
-  bool submit_output_frame(const AVFrame &frame);
+  bool submit_output_frame(const AVFrame & frame);
   void conversion_loop();
-  bool convert_frame(const AVFrame &source, DecodedFrame &output);
-  void discard_assembly(FrameAssembly &assembly, const char *reason);
+  bool convert_frame(const AVFrame & source, DecodedFrame & output);
+  void discard_assembly(FrameAssembly & assembly, const char * reason);
   void cleanup();
 
   DecoderConfig config_;
@@ -110,11 +115,11 @@ private:
   rclcpp::Logger logger_;
 
   int socket_fd_ = -1;
-  const AVCodec *codec_ = nullptr;
-  AVCodecContext *codec_context_ = nullptr;
-  AVPacket *packet_ = nullptr;
-  AVFrame *frame_ = nullptr;
-  SwsContext *sws_context_ = nullptr;
+  const AVCodec * codec_ = nullptr;
+  AVCodecContext * codec_context_ = nullptr;
+  AVPacket * packet_ = nullptr;
+  AVFrame * frame_ = nullptr;
+  SwsContext * sws_context_ = nullptr;
 
   std::vector<FrameAssembly> assemblies_;
   std::atomic<bool> running_{false};
@@ -137,6 +142,6 @@ private:
   std::atomic<std::uint64_t> error_{0};
 };
 
-std::optional<AVCodecID> parse_codec(const std::string &name);
+std::optional<AVCodecID> parse_codec(const std::string & name);
 
-} // namespace rm_video
+}  // namespace rm_video

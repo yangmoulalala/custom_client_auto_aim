@@ -1,36 +1,40 @@
 #include "rm_video/compressed_image_publisher.hpp"
 
+#include <jpeglib.h>
+
 #include <csetjmp>
 #include <cstdlib>
 #include <utility>
 
-#include <jpeglib.h>
-
-namespace rm_video {
-namespace {
+namespace rm_video
+{
+namespace
+{
 
 bool has_subscribers(
-    const rclcpp::Publisher<sensor_msgs::msg::CompressedImage>::SharedPtr
-        &publisher) {
+  const rclcpp::Publisher<sensor_msgs::msg::CompressedImage>::SharedPtr & publisher)
+{
   return publisher->get_subscription_count() > 0 ||
          publisher->get_intra_process_subscription_count() > 0;
 }
 
-struct JpegErrorManager {
+struct JpegErrorManager
+{
   jpeg_error_mgr base;
   std::jmp_buf jump_buffer;
 };
 
-void handle_jpeg_error(j_common_ptr context) {
-  auto *error = reinterpret_cast<JpegErrorManager *>(context->err);
+void handle_jpeg_error(j_common_ptr context)
+{
+  auto * error = reinterpret_cast<JpegErrorManager *>(context->err);
   std::longjmp(error->jump_buffer, 1);
 }
 
-bool encode_jpeg(const BgrImage &image, int quality,
-                 std::vector<std::uint8_t> &output) {
-  if (image.width <= 0 || image.height <= 0 ||
-      image.data.size() !=
-          static_cast<std::size_t>(image.width) * image.height * 3) {
+bool encode_jpeg(const BgrImage & image, int quality, std::vector<std::uint8_t> & output)
+{
+  if (
+    image.width <= 0 || image.height <= 0 ||
+    image.data.size() != static_cast<std::size_t>(image.width) * image.height * 3) {
     return false;
   }
 
@@ -39,7 +43,7 @@ bool encode_jpeg(const BgrImage &image, int quality,
   compressor.err = jpeg_std_error(&error.base);
   error.base.error_exit = handle_jpeg_error;
 
-  unsigned char *encoded_data = nullptr;
+  unsigned char * encoded_data = nullptr;
   unsigned long encoded_size = 0;
   if (setjmp(error.jump_buffer) != 0) {
     jpeg_destroy_compress(&compressor);
@@ -61,8 +65,7 @@ bool encode_jpeg(const BgrImage &image, int quality,
 
   const std::size_t stride = static_cast<std::size_t>(image.width) * 3;
   while (compressor.next_scanline < compressor.image_height) {
-    JSAMPROW row = const_cast<JSAMPROW>(image.data.data() +
-                                        compressor.next_scanline * stride);
+    JSAMPROW row = const_cast<JSAMPROW>(image.data.data() + compressor.next_scanline * stride);
     jpeg_write_scanlines(&compressor, &row, 1);
   }
 
@@ -73,29 +76,30 @@ bool encode_jpeg(const BgrImage &image, int quality,
   return true;
 }
 
-} // namespace
+}  // namespace
 
 CompressedImagePublisher::CompressedImagePublisher(
-    rclcpp::Node &node, const std::string &raw_topic,
-    const std::string &processed_topic, const rclcpp::QoS &qos,
-    int jpeg_quality)
-    : jpeg_quality_(jpeg_quality),
-      raw_publisher_(node.create_publisher<sensor_msgs::msg::CompressedImage>(
-          raw_topic, qos)),
-      processed_publisher_(
-          node.create_publisher<sensor_msgs::msg::CompressedImage>(
-              processed_topic, qos)) {}
+  rclcpp::Node & node, const std::string & raw_topic, const std::string & processed_topic,
+  const rclcpp::QoS & qos, int jpeg_quality)
+: jpeg_quality_(jpeg_quality),
+  raw_publisher_(node.create_publisher<sensor_msgs::msg::CompressedImage>(raw_topic, qos)),
+  processed_publisher_(
+    node.create_publisher<sensor_msgs::msg::CompressedImage>(processed_topic, qos))
+{
+}
 
 CompressedImagePublisher::~CompressedImagePublisher() { stop(); }
 
-void CompressedImagePublisher::start() {
+void CompressedImagePublisher::start()
+{
   if (running_.exchange(true)) {
     return;
   }
   worker_ = std::thread(&CompressedImagePublisher::worker_loop, this);
 }
 
-void CompressedImagePublisher::stop() {
+void CompressedImagePublisher::stop()
+{
   running_.store(false);
   {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -107,12 +111,13 @@ void CompressedImagePublisher::stop() {
   }
 }
 
-CompressionDemand CompressedImagePublisher::output_demand() const {
-  return CompressionDemand{has_subscribers(raw_publisher_),
-                           has_subscribers(processed_publisher_)};
+CompressionDemand CompressedImagePublisher::output_demand() const
+{
+  return CompressionDemand{has_subscribers(raw_publisher_), has_subscribers(processed_publisher_)};
 }
 
-void CompressedImagePublisher::submit(CompressionFrame frame) {
+void CompressedImagePublisher::submit(CompressionFrame frame)
+{
   const auto demand = output_demand();
   if (!running_.load() || (!demand.raw && !demand.processed)) {
     return;
@@ -125,14 +130,13 @@ void CompressedImagePublisher::submit(CompressionFrame frame) {
   condition_.notify_one();
 }
 
-void CompressedImagePublisher::worker_loop() {
+void CompressedImagePublisher::worker_loop()
+{
   while (true) {
     CompressionFrame frame;
     {
       std::unique_lock<std::mutex> lock(mutex_);
-      condition_.wait(lock, [this]() {
-        return !running_.load() || pending_frame_.has_value();
-      });
+      condition_.wait(lock, [this]() { return !running_.load() || pending_frame_.has_value(); });
       if (!running_.load()) {
         return;
       }
@@ -150,9 +154,9 @@ void CompressedImagePublisher::worker_loop() {
 }
 
 void CompressedImagePublisher::publish_image(
-    const BgrImage &image, const std_msgs::msg::Header &header,
-    const rclcpp::Publisher<sensor_msgs::msg::CompressedImage>::SharedPtr
-        &publisher) {
+  const BgrImage & image, const std_msgs::msg::Header & header,
+  const rclcpp::Publisher<sensor_msgs::msg::CompressedImage>::SharedPtr & publisher)
+{
   sensor_msgs::msg::CompressedImage message;
   message.header = header;
   message.format = "bgr8; jpeg compressed bgr8";
@@ -161,4 +165,4 @@ void CompressedImagePublisher::publish_image(
   }
 }
 
-} // namespace rm_video
+}  // namespace rm_video

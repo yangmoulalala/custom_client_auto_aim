@@ -36,7 +36,6 @@ private:
   double max_rectangular_error_;
 
   bool debug_;
-  std::string save_path_;
 
   // 利用PCA回归角点，参考自https://github.com/CSU-FYT-Vision/FYT2024_vision
   void lightbar_points_corrector(Lightbar & lightbar, const cv::Mat & gray_img) const;
@@ -51,7 +50,6 @@ private:
   ArmorType get_type(const Armor & armor);
   cv::Point2f get_center_norm(const cv::Mat & bgr_img, const cv::Point2f & center) const;
 
-  void save(const Armor & armor) const;
   void show_result(
     const cv::Mat & binary_img, const cv::Mat & bgr_img, const std::list<Lightbar> & lightbars,
     const std::list<Armor> & armors, int frame_count) const;

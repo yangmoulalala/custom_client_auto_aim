@@ -20,7 +20,7 @@ void set_yolov5_classification(Armor & armor, int color_id, int num_id)
                : num_id == 6 ? ArmorName::outpost
                : num_id <= 8 ? ArmorName::base
                              : ArmorName::not_armor;
-  armor.type = (num_id == 1 || num_id == 8) ? ArmorType::big : ArmorType::small;
+  armor.type = num_id == 1 ? ArmorType::big : ArmorType::small;
 }
 }  // namespace
 

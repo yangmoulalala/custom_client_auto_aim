@@ -3,11 +3,12 @@ enemy_color: "blue"
 
 
 #####-----神经网络参数-----#####
+# 归档配置：对应旧检测器和全向感知模块当前不参与默认构建。
 yolo_name: yolov5
-classify_model: auto_aim/assets/tiny_resnet.onnx
-yolo11_model_path: auto_aim/assets/yolo11.xml
-yolov8_model_path: auto_aim/assets/yolov8.xml
-yolov5_model_path: auto_aim/assets/yolov5.xml
+classify_model: auto_aim/models/tiny_resnet.onnx
+yolo11_model_path: auto_aim/models/yolo11.xml
+yolov8_model_path: auto_aim/models/yolov8.xml
+yolov5_model_path: auto_aim/models/yolov5.xml
 device: GPU
 min_confidence: 0.8
 use_traditional: true
@@ -67,6 +68,8 @@ yaw_offset: -0.8 # degree -2.5
 pitch_offset: -1  # degree 2
 comming_angle: 60 # degree
 leaving_angle: 20 # degree
+# 普通目标进入小陀螺选板的角速度阈值，单位 rad/s，必须为非负有限数；增大会延后进入小陀螺选板。
+min_spin_speed: 2
 left_yaw_offset: -1
 right_yaw_offset: -0.6
 decision_speed: 10 # rad/s

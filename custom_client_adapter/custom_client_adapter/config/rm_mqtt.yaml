@@ -2,12 +2,16 @@ rm_mqtt:
   ros__parameters:
     # 裁判系统自定义客户端 MQTT 服务器地址。
     mqtt.host: "192.168.12.1"
-    # 裁判系统自定义客户端 MQTT 服务器端口。
+    # 裁判系统自定义客户端 MQTT 服务器端口，范围为 1 到 65535。
     mqtt.port: 3333
-    # MQTT 心跳保活时间，单位为秒。
+    # MQTT 心跳保活时间，单位为秒，必须为正整数。
     mqtt.keepalive_sec: 10
-    # MQTT 未连接时的自动重连间隔，默认每秒重试一次。
-    mqtt.reconnect_interval_sec: 1
+    # MQTT 连接失败后的重试间隔，单位为秒，必须为正有限数。
+    mqtt.reconnect_interval_sec: 0.1
+    # TCP 建立连接的超时时间，单位为秒，必须为正有限数。
+    mqtt.tcp_connect_timeout_sec: 1.0
+    # TCP 连接后等待 MQTT CONNACK 的超时时间，单位为秒，必须为正有限数。
+    mqtt.connack_timeout_sec: 1.0
     # 机器人 0x0310 数据对应的 MQTT 订阅主题。
     mqtt.subscription_topic: "CustomByteBlock"
     # 机器人 0x0311 控制数据对应的 MQTT 发布主题。
@@ -19,12 +23,12 @@ rm_mqtt:
     publisher.self_is_red_topic: "/rm_mqtt/self_is_red"
     # 写入 IMU 消息 header.frame_id 的坐标系名称。
     publisher.frame_id: "imu_link"
-    # ROS 发布队列深度；保持为 1 可避免旧消息积压。
+    # ROS 发布队列深度，必须为正整数；完整链路固定保持为 1，避免旧消息积压。
     publisher.qos_depth: 1
 
     # 自瞄控制 JSON 的 ROS 订阅话题。
     subscriber.control_topic: "/auto_aim/result"
-    # ROS 控制订阅队列深度；保持为 1 可避免旧控制积压。
+    # ROS 控制订阅队列深度，必须为正整数；完整链路固定保持为 1，避免旧控制积压。
     subscriber.qos_depth: 1
 
     # 是否允许把 shoot=true 转换为下位机开火模式；关闭时只控制云台。
@@ -32,7 +36,7 @@ rm_mqtt:
     # 0x0311 最大发送频率，单位为 Hz；裁判系统要求不得超过 75 Hz。
     control.max_send_rate_hz: 75.0
 
-    # IMU 时间戳补偿秒数，可为负数，例如 -0.05 表示提前 50 ms。
+    # IMU 时间戳补偿秒数，绝对值不得超过 86400，例如 -0.05 表示提前 50 ms。
     timestamp_offset_sec: 0.0
-    # tx/rx packets/s 统计和日志输出窗口，单位为秒。
+    # tx/rx packets/s 统计和日志输出窗口，单位为秒，必须为正有限数。
     statistics.window_sec: 1.0

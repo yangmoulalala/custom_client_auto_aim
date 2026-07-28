@@ -5,7 +5,6 @@
 #include <chrono>
 #include <list>
 
-#include "io/cboard.hpp"
 #include "io/command.hpp"
 #include "target.hpp"
 
@@ -37,6 +36,7 @@ private:
   double pitch_offset_;
   double comming_angle_;
   double leaving_angle_;
+  double min_spin_speed_;
   double lock_id_ = -1;
   double high_speed_delay_time_;
   double low_speed_delay_time_;

@@ -1,13 +1,19 @@
-cmake_minimum_required(VERSION 3.16.3)
+cmake_minimum_required(VERSION 3.24)
 
-project(sp_vision)
+project(sp_vision LANGUAGES CXX)
 
 include(CTest)
 
 set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_BUILD_TYPE Release)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+endif()
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
-message(STATUS "--------------------CMAKE_BUILD_TYPE: ${CMAKE_BUILD_TYPE}--------------------")
+
+option(SP_VISION_ENABLE_CUDA "Enable the ONNX Runtime CUDA execution path" ON)
+set(ONNXRUNTIME_ROOT "/opt/onnxruntime" CACHE PATH "System ONNX Runtime installation")
 
 find_package(OpenCV REQUIRED)
 find_package(fmt REQUIRED)
@@ -15,182 +21,169 @@ find_package(Eigen3 REQUIRED)
 find_package(spdlog REQUIRED)
 find_package(yaml-cpp REQUIRED)
 find_package(nlohmann_json REQUIRED)
-set(OpenVINO_DIR "/opt/intel/openvino_2024.6.0/runtime/cmake/")
-find_package(OpenVINO REQUIRED)
 
-include_directories(${EIGEN3_INCLUDE_DIR})
-include_directories(${OpenCV_INCLUDE_DIRS})
+find_path(
+    ONNXRUNTIME_INCLUDE_DIR onnxruntime_cxx_api.h
+    HINTS "${ONNXRUNTIME_ROOT}/include"
+    NO_DEFAULT_PATH
+    NO_CACHE)
+find_library(
+    ONNXRUNTIME_LIBRARY onnxruntime
+    HINTS "${ONNXRUNTIME_ROOT}/lib" "${ONNXRUNTIME_ROOT}/lib64"
+    NO_DEFAULT_PATH
+    NO_CACHE)
+if(NOT ONNXRUNTIME_INCLUDE_DIR OR NOT ONNXRUNTIME_LIBRARY)
+    message(FATAL_ERROR
+        "ONNX Runtime was not found under ${ONNXRUNTIME_ROOT}. "
+        "Follow the installation steps in the repository README, or set ONNXRUNTIME_ROOT "
+        "explicitly.")
+endif()
+
+set(ONNXRUNTIME_VERSION_FILE "${ONNXRUNTIME_ROOT}/VERSION_NUMBER")
+if(NOT EXISTS "${ONNXRUNTIME_VERSION_FILE}")
+    message(FATAL_ERROR
+        "${ONNXRUNTIME_ROOT} has no VERSION_NUMBER file; ONNX Runtime 1.28.0 is required.")
+endif()
+file(STRINGS "${ONNXRUNTIME_VERSION_FILE}" ONNXRUNTIME_VERSION LIMIT_COUNT 1)
+if(NOT ONNXRUNTIME_VERSION STREQUAL "1.28.0")
+    message(FATAL_ERROR
+        "ONNX Runtime 1.28.0 is required, but ${ONNXRUNTIME_ROOT} contains "
+        "${ONNXRUNTIME_VERSION}.")
+endif()
+
+add_library(onnxruntime::onnxruntime SHARED IMPORTED)
+set_target_properties(
+    onnxruntime::onnxruntime PROPERTIES
+    IMPORTED_LOCATION "${ONNXRUNTIME_LIBRARY}"
+    INTERFACE_INCLUDE_DIRECTORIES "${ONNXRUNTIME_INCLUDE_DIR}")
+
+if(SP_VISION_ENABLE_CUDA)
+    if(NOT EXISTS "${ONNXRUNTIME_ROOT}/lib/libonnxruntime_providers_cuda.so")
+        message(FATAL_ERROR
+            "${ONNXRUNTIME_ROOT} has no CUDA Execution Provider. "
+            "Follow the installation steps in the repository README.")
+    endif()
+    if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES OR CMAKE_CUDA_ARCHITECTURES STREQUAL "")
+        set(CMAKE_CUDA_ARCHITECTURES 86 CACHE STRING "CUDA architectures" FORCE)
+    endif()
+    if(NOT CMAKE_CUDA_COMPILER AND EXISTS "/usr/local/cuda-12.8/bin/nvcc")
+        set(CMAKE_CUDA_COMPILER "/usr/local/cuda-12.8/bin/nvcc"
+            CACHE FILEPATH "CUDA compiler" FORCE)
+    endif()
+    enable_language(CUDA)
+    find_package(CUDAToolkit 12.8 EXACT REQUIRED)
+    find_library(
+        CUDNN_LIBRARY cudnn
+        HINTS /usr/lib/x86_64-linux-gnu /usr/local/cuda-12.8/lib64
+        NO_CACHE)
+    if(NOT CUDNN_LIBRARY)
+        message(FATAL_ERROR
+            "cuDNN 9 was not found. Follow the installation steps in the repository README.")
+    endif()
+    file(REAL_PATH "${CUDNN_LIBRARY}" CUDNN_REALPATH)
+    if(NOT CUDNN_REALPATH MATCHES "libcudnn\\.so\\.9(\\.|$)")
+        message(FATAL_ERROR
+            "cuDNN 9 is required, but ${CUDNN_REALPATH} was found. "
+            "Follow the installation steps in the repository README.")
+    endif()
+    message(STATUS "AUV inference backend: ONNX Runtime CUDA (GPU 0, SM 8.6)")
+else()
+    message(WARNING
+        "Building without CUDA support. device: GPU will fail at startup; this mode is for "
+        "CPU validation only.")
+endif()
+
 include_directories(${PROJECT_SOURCE_DIR})
-
 
 add_subdirectory(tools)
 add_subdirectory(io)
 add_subdirectory(tasks/auto_aim)
-add_subdirectory(tasks/auto_buff)
-add_subdirectory(tasks/omniperception)
-
-####################src###################
-add_executable(standard src/standard.cpp)
-add_executable(mt_standard src/mt_standard.cpp)
-add_executable(standard_mpc src/standard_mpc.cpp)
-add_executable(auto_aim_debug_mpc src/auto_aim_debug_mpc.cpp)
-add_executable(mt_auto_aim_debug src/mt_auto_aim_debug.cpp)
-add_executable(auto_buff_debug src/auto_buff_debug.cpp)
-add_executable(auto_buff_debug_mpc src/auto_buff_debug_mpc.cpp)
-add_executable(uav src/uav.cpp)
-add_executable(uav_debug src/uav_debug.cpp)
 
 if(TARGET auv_io)
-    add_executable(auv_client src/auv_client.cpp)
+    add_executable(custom_client src/custom_client.cpp)
     target_link_libraries(
-        auv_client ${OpenCV_LIBS} fmt::fmt yaml-cpp nlohmann_json::nlohmann_json
-        auto_aim tools io auv_io)
+        custom_client PRIVATE ${OpenCV_LIBS} fmt::fmt yaml-cpp
+        nlohmann_json::nlohmann_json auto_aim tools auv_io)
 
-    if(BUILD_TESTING)
-        add_executable(auv_client_io_test tests/auv_client_io_test.cpp)
-        target_compile_definitions(
-            auv_client_io_test PRIVATE
-            AUV_CLIENT_TEST_CONFIG="${PROJECT_SOURCE_DIR}/tests/auv_client_io_test.yaml")
-        target_link_libraries(
-            auv_client_io_test ${OpenCV_LIBS} nlohmann_json::nlohmann_json auv_io)
-        add_test(NAME auv_client_io_test COMMAND auv_client_io_test)
-        set_tests_properties(
-            auv_client_io_test PROPERTIES TIMEOUT 15
-            ENVIRONMENT "ROS_LOG_DIR=/tmp;ROS_DOMAIN_ID=231")
+    find_package(rclcpp REQUIRED)
+    find_package(sensor_msgs REQUIRED)
 
-        add_executable(solver_image_size_test tests/solver_image_size_test.cpp)
-        target_compile_definitions(
-            solver_image_size_test PRIVATE
-            SOLVER_IMAGE_SIZE_TEST_CONFIG="${PROJECT_SOURCE_DIR}/tests/solver_image_size.yaml")
-        target_link_libraries(
-            solver_image_size_test ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim tools io)
-        add_test(NAME solver_image_size_test COMMAND solver_image_size_test)
-
-        add_executable(handeye_transform_test tests/handeye_transform_test.cpp)
-        target_link_libraries(handeye_transform_test ${OpenCV_LIBS})
-        add_test(NAME handeye_transform_test COMMAND handeye_transform_test)
-    endif()
-endif()
-
-target_link_libraries(standard ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim auto_buff tools io)
-target_link_libraries(mt_standard ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim auto_buff tools io)
-target_link_libraries(standard_mpc ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim auto_buff tools io)
-target_link_libraries(auto_aim_debug_mpc ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim auto_buff tools io)
-target_link_libraries(mt_auto_aim_debug ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim auto_buff tools io)
-target_link_libraries(auto_buff_debug ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_buff tools io ${CERES_LIBRARIES})
-target_link_libraries(auto_buff_debug_mpc ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_buff tools io ${CERES_LIBRARIES})
-target_link_libraries(uav ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim auto_buff tools io)
-target_link_libraries(uav_debug ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim tools io)
-
-##################calibration################
-add_executable(capture calibration/capture.cpp)
-add_executable(calibrate_camera calibration/calibrate_camera.cpp)
-add_executable(calibrate_handeye calibration/calibrate_handeye.cpp)
-add_executable(calibrate_robotworld_handeye calibration/calibrate_robotworld_handeye.cpp)
-add_executable(split_video calibration/split_video.cpp)
-
-target_link_libraries(capture ${OpenCV_LIBS} fmt::fmt tools io)
-target_link_libraries(calibrate_camera ${OpenCV_LIBS} fmt::fmt yaml-cpp tools)
-target_link_libraries(calibrate_handeye ${OpenCV_LIBS} fmt::fmt yaml-cpp tools)
-target_link_libraries(calibrate_robotworld_handeye ${OpenCV_LIBS} fmt::fmt yaml-cpp tools)
-target_link_libraries(split_video ${OpenCV_LIBS} fmt::fmt tools)
-
-if(TARGET auv_io)
     add_executable(ros_calibrate_camera calibration/ros_calibrate_camera.cpp)
+    target_link_libraries(
+        ros_calibrate_camera ${OpenCV_LIBS} fmt::fmt yaml-cpp tools)
+    ament_target_dependencies(ros_calibrate_camera rclcpp sensor_msgs)
+
     add_executable(ros_calibrate_handeye calibration/ros_calibrate_handeye.cpp)
     target_link_libraries(
-        ros_calibrate_camera ${OpenCV_LIBS} fmt::fmt yaml-cpp tools auv_io)
-    target_link_libraries(
-        ros_calibrate_handeye ${OpenCV_LIBS} fmt::fmt yaml-cpp tools auv_io)
+        ros_calibrate_handeye ${OpenCV_LIBS} fmt::fmt yaml-cpp tools)
+    ament_target_dependencies(ros_calibrate_handeye rclcpp sensor_msgs)
 endif()
 
-##################tests##################
 if(BUILD_TESTING)
     add_executable(yolov5_model_test tests/yolov5_model_test.cpp)
     target_compile_definitions(
         yolov5_model_test PRIVATE
-        AUV_CLIENT_CONFIG="${PROJECT_SOURCE_DIR}/configs/AUVClient.yaml")
+        CUSTOM_CLIENT_CONFIG="${PROJECT_SOURCE_DIR}/configs/custom_client.yaml"
+        AUV_MODEL_PATH="${PROJECT_SOURCE_DIR}/models/0526.onnx"
+        INVALID_MODEL_PATH="${PROJECT_SOURCE_DIR}/models/tiny_resnet.onnx"
+        AUV_DEMO_PATH="${PROJECT_SOURCE_DIR}/assets/demo/demo.avi")
+    if(SP_VISION_ENABLE_CUDA)
+        target_compile_definitions(yolov5_model_test PRIVATE SP_VISION_TEST_WITH_CUDA=1)
+    endif()
     target_link_libraries(
-        yolov5_model_test ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim tools io)
+        yolov5_model_test PRIVATE ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim tools)
     add_test(NAME yolov5_model_test COMMAND yolov5_model_test)
     set_tests_properties(
-        yolov5_model_test PROPERTIES TIMEOUT 30
+        yolov5_model_test PROPERTIES TIMEOUT 90
         WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}/..")
+
+    add_executable(solver_image_size_test tests/solver_image_size_test.cpp)
+    target_compile_definitions(
+        solver_image_size_test PRIVATE
+        SOLVER_IMAGE_SIZE_TEST_CONFIG="${PROJECT_SOURCE_DIR}/tests/solver_image_size.yaml")
+    target_link_libraries(
+        solver_image_size_test PRIVATE ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim tools)
+    add_test(NAME solver_image_size_test COMMAND solver_image_size_test)
+
+    add_executable(handeye_transform_test tests/handeye_transform_test.cpp)
+    target_link_libraries(handeye_transform_test PRIVATE ${OpenCV_LIBS} Eigen3::Eigen)
+    add_test(NAME handeye_transform_test COMMAND handeye_transform_test)
 
     add_executable(outpost_model_test tests/outpost_model_test.cpp)
     target_compile_definitions(
         outpost_model_test PRIVATE
         OUTPOST_MODEL_TEST_CONFIG="${PROJECT_SOURCE_DIR}/tests/outpost_model_test.yaml")
     target_link_libraries(
-        outpost_model_test ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim tools io)
+        outpost_model_test PRIVATE ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim tools)
     add_test(NAME outpost_model_test COMMAND outpost_model_test)
-endif()
 
-add_executable(auto_aim_test tests/auto_aim_test.cpp)
-add_executable(auto_buff_test tests/auto_buff_test.cpp)
-add_executable(camera_detect_test tests/camera_detect_test.cpp)
-add_executable(camera_test tests/camera_test.cpp)
-add_executable(camera_thread_test tests/camera_thread_test.cpp)
-add_executable(cboard_test tests/cboard_test.cpp)
-add_executable(fire_test tests/fire_test.cpp)
-add_executable(detector_video_test tests/detector_video_test.cpp)
-add_executable(gimbal_response_test tests/gimbal_response_test.cpp)
-add_executable(multi_usbcamera_test tests/multi_usbcamera_test.cpp)
-add_executable(usbcamera_detect_test tests/usbcamera_detect_test.cpp)
-add_executable(usbcamera_test tests/usbcamera_test.cpp)
-add_executable(handeye_test tests/handeye_test.cpp)
-add_executable(dm_test tests/dm_test.cpp)
-add_executable(minimum_vision_system tests/minimum_vision_system.cpp)
+    add_executable(aimer_spin_selection_test tests/aimer_spin_selection_test.cpp)
+    target_compile_definitions(
+        aimer_spin_selection_test PRIVATE
+        AIMER_SPIN_SELECTION_TEST_CONFIG="${PROJECT_SOURCE_DIR}/tests/aimer_spin_selection_test.yaml"
+        AIMER_SPIN_SELECTION_INVALID_CONFIG="${PROJECT_SOURCE_DIR}/tests/aimer_spin_selection_invalid.yaml")
+    target_link_libraries(
+        aimer_spin_selection_test PRIVATE ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim tools)
+    add_test(NAME aimer_spin_selection_test COMMAND aimer_spin_selection_test)
 
-target_link_libraries(auto_aim_test ${OpenCV_LIBS} fmt::fmt yaml-cpp tools io auto_aim)
-target_link_libraries(auto_buff_test ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_buff tools io)
-target_link_libraries(camera_detect_test ${OpenCV_LIBS} fmt::fmt yaml-cpp tools auto_aim io)
-target_link_libraries(camera_test ${OpenCV_LIBS} fmt::fmt tools io)
-target_link_libraries(camera_thread_test ${OpenCV_LIBS} fmt::fmt auto_aim tools io)
-target_link_libraries(cboard_test ${OpenCV_LIBS} fmt::fmt tools io)
-target_link_libraries(fire_test ${OpenCV_LIBS} fmt::fmt tools io)
-target_link_libraries(detector_video_test ${OpenCV_LIBS} fmt::fmt yaml-cpp tools auto_aim)
-target_link_libraries(gimbal_response_test ${OpenCV_LIBS} fmt::fmt yaml-cpp tools io)
-target_link_libraries(multi_usbcamera_test ${OpenCV_LIBS} fmt::fmt tools io)
-target_link_libraries(usbcamera_detect_test ${OpenCV_LIBS} fmt::fmt yaml-cpp tools io auto_aim)
-target_link_libraries(usbcamera_test ${OpenCV_LIBS} fmt::fmt yaml-cpp tools io)
-target_link_libraries(handeye_test ${OpenCV_LIBS} fmt::fmt yaml-cpp tools io auto_aim)
-target_link_libraries(dm_test ${OpenCV_LIBS} fmt::fmt yaml-cpp tools io)
-target_link_libraries(minimum_vision_system ${OpenCV_LIBS} fmt::fmt yaml-cpp tools io auto_aim)
+    add_executable(target_layout_test tests/target_layout_test.cpp)
+    target_compile_definitions(
+        target_layout_test PRIVATE
+        TARGET_LAYOUT_TEST_CONFIG="${PROJECT_SOURCE_DIR}/tests/target_layout_test.yaml")
+    target_link_libraries(
+        target_layout_test PRIVATE ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim tools)
+    add_test(NAME target_layout_test COMMAND target_layout_test)
 
-add_executable(gimbal_test tests/gimbal_test.cpp)
-target_link_libraries(gimbal_test ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim tools io)
-
-add_executable(planner_test tests/planner_test.cpp)
-target_link_libraries(planner_test ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim tools io)
-
-add_executable(planner_test_offline tests/planner_test_offline.cpp)
-target_link_libraries(planner_test_offline ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim tools io)
-
-# 检查 ROS 环境
-find_package(ament_cmake QUIET)
-find_package(rclcpp QUIET)
-find_package(std_msgs QUIET)
-find_package(rosidl_typesupport_cpp QUIET)
-find_package(sp_msgs QUIET)
-# 只有在找到 ROS 环境时才会添加 sentry 和 publish_test
-if(ament_cmake_FOUND AND rclcpp_FOUND AND std_msgs_FOUND AND rosidl_typesupport_cpp_FOUND AND sp_msgs_FOUND)
-    # 编译 sentry 和 publish_test
-    add_executable(sentry src/sentry.cpp)
-    add_executable(sentry_bp src/sentry_bp.cpp)
-    add_executable(sentry_debug src/sentry_debug.cpp)
-    add_executable(sentry_multithread src/sentry_multithread.cpp)
-    add_executable(publish_test tests/publish_test.cpp)
-    add_executable(subscribe_test tests/subscribe_test.cpp)
-    add_executable(topic_loop_test tests/topic_loop_test.cpp)
-
-    target_link_libraries(sentry ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim omniperception tools io)
-    target_link_libraries(sentry_bp ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim omniperception tools io)
-    target_link_libraries(sentry_debug ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim omniperception tools io)
-    target_link_libraries(sentry_multithread ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim omniperception tools io)
-    target_link_libraries(publish_test ${OpenCV_LIBS} fmt::fmt tools io auto_aim)
-    target_link_libraries(subscribe_test ${OpenCV_LIBS} fmt::fmt tools io)
-    target_link_libraries(topic_loop_test ${OpenCV_LIBS} fmt::fmt tools io)
-else()
-    message(STATUS "ROS2 environment not found, skipping ROS2-related code.")
+    if(TARGET auv_io)
+        add_executable(auv_client_io_test tests/auv_client_io_test.cpp)
+        target_compile_definitions(
+            auv_client_io_test PRIVATE
+            AUV_CLIENT_TEST_CONFIG="${PROJECT_SOURCE_DIR}/tests/auv_client_io_test.yaml")
+        target_link_libraries(
+            auv_client_io_test PRIVATE ${OpenCV_LIBS} nlohmann_json::nlohmann_json auv_io)
+        add_test(NAME auv_client_io_test COMMAND auv_client_io_test)
+        set_tests_properties(
+            auv_client_io_test PROPERTIES TIMEOUT 15
+            ENVIRONMENT "ROS_LOG_DIR=/tmp;ROS_DOMAIN_ID=231")
+    endif()
 endif()

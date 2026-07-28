@@ -1,11 +1,10 @@
 #include "yolov8.hpp"
 
-#include <fmt/chrono.h>
+#include <fmt/format.h>
 #include <omp.h>
 #include <yaml-cpp/yaml.h>
 
 #include <algorithm>
-#include <filesystem>
 #include <random>
 
 #include "tasks/auto_aim/classifier.hpp"
@@ -31,9 +30,6 @@ YOLOV8::YOLOV8(const std::string & config_path, bool debug)
   use_roi_ = yaml["use_roi"].as<bool>();
   roi_ = cv::Rect(x, y, width, height);
   offset_ = cv::Point2f(x, y);
-
-  save_path_ = "imgs";
-  std::filesystem::create_directory(save_path_);
 
   auto model = core_.read_model(model_path_);
   ov::preprocess::PrePostProcessor ppp(model);
@@ -189,41 +185,20 @@ bool YOLOV8::check_name(const Armor & armor) const
   auto name_ok = armor.name != ArmorName::not_armor;
   auto confidence_ok = armor.confidence > min_confidence_;
 
-  // 保存不确定的图案，用于分类器的迭代
-  // if (name_ok && !confidence_ok) save(armor);
-
   return name_ok && confidence_ok;
 }
 
 bool YOLOV8::check_type(const Armor & armor) const
 {
-  auto name_ok = (armor.type == ArmorType::small)
-                   ? (armor.name != ArmorName::one && armor.name != ArmorName::base)
-                   : (armor.name != ArmorName::two && armor.name != ArmorName::sentry &&
-                      armor.name != ArmorName::outpost);
-
-  // 保存异常的图案，用于分类器的迭代
-  // if (!name_ok) save(armor);
+  auto name_ok = armor.type == ArmorType::big ? armor.name == ArmorName::one
+                                               : armor.name != ArmorName::one;
 
   return name_ok;
 }
 
 ArmorType YOLOV8::get_type(const Armor & armor)
 {
-  // 英雄、基地只能是大装甲板
-  if (armor.name == ArmorName::one || armor.name == ArmorName::base) {
-    return ArmorType::big;
-  }
-
-  // 工程、哨兵、前哨站只能是小装甲板
-  if (
-    armor.name == ArmorName::two || armor.name == ArmorName::sentry ||
-    armor.name == ArmorName::outpost) {
-    return ArmorType::small;
-  }
-
-  // 步兵假设为小装甲板
-  return ArmorType::small;
+  return armor.name == ArmorName::one ? ArmorType::big : ArmorType::small;
 }
 
 cv::Point2f YOLOV8::get_center_norm(const cv::Mat & bgr_img, const cv::Point2f & center) const
@@ -264,13 +239,6 @@ cv::Mat YOLOV8::get_pattern(const cv::Mat & bgr_img, const Armor & armor) const
   }
 
   return bgr_img(roi);
-}
-
-void YOLOV8::save(const Armor & armor) const
-{
-  auto file_name = fmt::format("{:%Y-%m-%d_%H-%M-%S}", std::chrono::system_clock::now());
-  auto img_path = fmt::format("{}/{}_{}.jpg", save_path_, armor.name, file_name);
-  cv::imwrite(img_path, armor.pattern);
 }
 
 void YOLOV8::draw_detections(

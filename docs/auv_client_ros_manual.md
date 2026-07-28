@@ -1,61 +1,92 @@
-# ROS 2 AUV Client 对外接口手册
+# ROS 2 Custom Client 对外接口手册
 
-本文档面向图像/IMU 发布端、云台控制端和现场部署人员，说明 `auv_client` 的 ROS 2 接口、数据格式、时间同步、坐标系、标定与安全约定。本文所述行为对应当前仓库中的 `io::AUVClient` 和 `auv_client` 可执行程序。
+本文档面向图像/IMU 发布端、云台控制端和现场部署人员，说明 `custom_client` 的 ROS 2 接口、
+数据格式、时间同步、坐标系、标定与安全约定。本文所述行为对应当前仓库中的 `io::AUVClient`、
+`custom_client` 可执行程序及 `rm_mqtt` 桥接实现。`0x0310`/`0x0311` 的字节布局另见
+`docs/Aim_Task_Protocol.md`。
 
 ## 1. 功能与数据流
 
-`auv_client` 用 ROS 2 标准消息替代项目原有的工业相机和 CBoard 输入，始终运行自瞄链路，不包含 CBoard 模式切换和打符分支。
+`custom_client` 用 ROS 2 标准消息替代项目原有的工业相机和 CBoard 输入，始终运行自瞄链路，不包含 CBoard 模式切换和打符分支。
 
 ```text
-sensor_msgs/CompressedImage ─┐
-                             ├─ 时间戳配对 → Detector → Solver → Tracker → Aimer → Shooter
-sensor_msgs/Imu ─────────────┘                                                   │
-                                                                       ▼
-                                                     std_msgs/String（JSON）
+/rm_video/image_processed (CompressedImage) ─┐
+/rm_mqtt/imu (Imu) ──────────────────────────┼─ 配对 → YOLOv5/ORT → Solver
+/rm_mqtt/self_is_red (Bool) ─────────────────┘                    → Tracker → Aimer → Shooter
+                                                                             │
+                                      /auto_aim/debug (CompressedImage) <─────┤
+                                      /auto_aim/result (String/JSON) <────────┘
+                                                                             │
+                                                                  rm_mqtt → MQTT 0x0311
 ```
 
 基本信息：
 
 | 项目 | 值 |
 |---|---|
-| 可执行程序 | `auv_client` |
-| ROS 节点名 | `auv_client` |
-| 默认配置文件 | `auto_aim/configs/AUVClient.yaml` |
-| 输入 | 压缩图像、IMU 姿态 |
+| 可执行程序 | `custom_client` |
+| ROS 节点名 | `custom_client` |
+| ROS 日志前缀 | `auto_aim` |
+| 默认配置文件 | `auto_aim/configs/custom_client.yaml` |
+| 输入 | 压缩图像、IMU 姿态、己方阵营 |
 | 输出 | JSON 格式的绝对 yaw/pitch 自瞄指令 |
 | ROS 消息依赖 | `rclcpp`、`sensor_msgs`、`std_msgs` |
 
-`auv_client` 不依赖 `sp_msgs`。系统未安装或未 source ROS 2 时，CMake 只跳过 AUV Client 和 ROS 标定程序，原有非 ROS 程序仍可构建。
+`custom_client` 不依赖 `sp_msgs`。系统未安装或未 source ROS 2 时，CMake 跳过 Custom Client 和 ROS
+标定程序，仍构建自瞄核心和非 ROS 直接测试。YOLOv8/11、传统检测器、全向感知和能量机关检测器
+源码保留，但不进入默认构建。
 
 ## 2. 构建与运行
 
-先安装项目通用依赖和 ROS 2，并在执行 CMake 前 source 对应 ROS 2 环境。例如：
+先按根 README 的“安装依赖”章节，全局安装 ONNX Runtime 1.28.0、CUDA Toolkit 12.8 和
+cuDNN 9。安装命令及其系统改动均直接列在 README 中；CMake 只从 `/opt/onnxruntime` 与系统
+CUDA 路径查找，不会下载依赖到 `build/`。然后安装项目通用依赖和 ROS 2，并在执行 CMake 前
+source 对应 ROS 2 环境。例如：
 
 ```bash
 source /opt/ros/jazzy/setup.bash
 cmake -S auto_aim -B build/auto_aim -DCMAKE_BUILD_TYPE=Release
-cmake --build build/auto_aim -j
+cmake --build build/auto_aim -j "$(nproc)"
 ```
 
 CMake 输出中出现以下内容表示标准 ROS 接口已启用：
 
 ```text
-ROS2 standard messages found, compiling AUV client I/O.
+ROS2 standard messages found, compiling custom client I/O.
 ```
 
-首次运行前，必须在 `auto_aim/configs/AUVClient.yaml` 中填写真实标定结果，特别是 `calibration_image_width` 和 `calibration_image_height`。这两个值为 `0` 时程序会拒绝启动。
+完整链路优先从仓库根目录启动：
 
 ```bash
-./build/auto_aim/auv_client auto_aim/configs/AUVClient.yaml
+./start.sh
+./start.sh --show
 ```
 
-不传路径时也默认使用 `auto_aim/configs/AUVClient.yaml`：
+脚本依次构建自瞄和适配器，再启动 `rm_video`、`rm_mqtt` 和带 `--debug` 的 `custom_client`。
+它只识别可选的 `--show`；其他参数会被忽略，MQTT client ID 由适配器自动探测。
+
+首次运行前，必须在 `auto_aim/configs/custom_client.yaml` 中填写真实标定结果，特别是
+`calibration_image_width` 和 `calibration_image_height`。这两个值不为正数时程序会拒绝启动。
+仅运行自瞄端时使用：
 
 ```bash
-./build/auto_aim/auv_client
+./build/auto_aim/custom_client auto_aim/configs/custom_client.yaml
 ```
+
+不传路径时也默认使用 `auto_aim/configs/custom_client.yaml`：
+
+```bash
+./build/auto_aim/custom_client
+```
+
+可选的 `--debug` 每秒输出输入、识别、跟踪和控制统计；`--show` 创建本地 OpenCV 调试窗口。
 
 配置通过 YAML 加载，不是 ROS 参数；修改配置后需要重启进程。
+
+活动模型固定为 `auto_aim/models/0526.onnx`，模型颜色顺序为 `blue_red_gray_purple`。`device` 只
+接受 `CPU` 或 `GPU`，默认 `GPU`。GPU 模式使用 CUDA Provider，并禁止模型节点回退 CPU；Provider
+不可用、发生回退或模型输入输出契约不匹配时均启动失败。CPU 模式显式使用 ORT CPU Provider，
+不会加载 OpenVINO。两种模式启动时都执行预热。
 
 ## 3. ROS 话题接口
 
@@ -63,21 +94,23 @@ ROS2 standard messages found, compiling AUV client I/O.
 
 | 方向 | 默认话题 | ROS 类型 | QoS |
 |---|---|---|---|
-| 输入 | `/camera/image_raw` | `sensor_msgs/msg/CompressedImage` | best effort、volatile、keep last 1 |
-| 输入 | `/imu/data` | `sensor_msgs/msg/Imu` | best effort、volatile、keep last 1 |
+| 输入 | `/rm_video/image_processed` | `sensor_msgs/msg/CompressedImage` | best effort、volatile、keep last 1 |
+| 输入 | `/rm_mqtt/imu` | `sensor_msgs/msg/Imu` | best effort、volatile、keep last 1 |
+| 输入 | `/rm_mqtt/self_is_red` | `std_msgs/msg/Bool` | best effort、volatile、keep last 1 |
 | 输出 | `/auto_aim/result` | `std_msgs/msg/String` | best effort、volatile、keep last 1 |
 | 输出 | `/auto_aim/debug` | `sensor_msgs/msg/CompressedImage` | best effort、volatile、keep last 1 |
 
 可在 YAML 中修改话题名：
 
 ```yaml
-ros_image_topic: "/camera/image_raw"
-ros_imu_topic: "/imu/data"
+ros_image_topic: "/rm_video/image_processed"
+ros_imu_topic: "/rm_mqtt/imu"
+ros_self_is_red_topic: "/rm_mqtt/self_is_red"
 ros_result_topic: "/auto_aim/result"
 ros_debug_topic: "/auto_aim/debug"
 ```
 
-发布端和 `auv_client` 预期位于同一主机。图像和 IMU 发布端应使用与订阅端兼容的传感器 QoS，并将队列深度设为 1。DDS 实现支持时，建议启用共享内存传输。
+发布端和 `custom_client` 预期位于同一主机。图像和 IMU 发布端应使用与订阅端兼容的传感器 QoS，并将队列深度设为 1。DDS 实现支持时，建议启用共享内存传输。
 
 ### 3.2 图像输入
 
@@ -85,15 +118,18 @@ ros_debug_topic: "/auto_aim/debug"
 
 | 字段 | 要求 |
 |---|---|
-| `header.stamp` | 与 IMU 共用同一 ROS 时钟，表示上游完成对齐后的发布时间 |
+| `header.stamp` | 与 IMU 共用同一 ROS 时钟；当前适配器写入 `rm_video.now()+timestamp_offset_sec` |
 | `header.frame_id` | 当前版本不读取，不触发 TF 查询 |
-| `format` | 记录压缩格式；解码由 OpenCV 根据负载内容完成 |
+| `format` | 仅作格式描述；程序不据此选择解码器，OpenCV 按负载内容解码 |
 | `data` | 必须包含可解码的压缩图像负载 |
 
 程序使用 OpenCV 将负载解码为三通道 BGR 图像。负载为空、损坏或无法解码时拒绝该帧并输出
 安全结果；单通道压缩图像会在解码时扩展为 BGR。
 
-首个有效图像决定本次运行的固定输入分辨率。实际输入可以与内参标定分辨率不同，但宽高比相对误差必须不超过 1%，此时程序按宽、高分别缩放 `fx`、`fy`、`cx`、`cy`，畸变参数保持不变。运行中改变图像分辨率会拒绝该帧并发布安全结果，不会跨分辨率延续 Tracker 状态。
+首个成功解码的图像决定本次运行的固定输入分辨率。实际输入可以与内参标定分辨率不同，但宽高比
+相对误差必须不超过 1%；此时程序按宽、高分别缩放 `fx`、`fy`、`cx`、`cy`，畸变参数保持不变。
+首帧尺寸无效或宽高比不兼容时，程序发布安全结果并以失败状态退出。运行中尺寸变化时仅拒绝该帧
+并发布安全结果；固定尺寸不会自动切换，Tracker 也不会因这一帧自动重置。
 
 ### 3.3 IMU 输入
 
@@ -101,7 +137,7 @@ ros_debug_topic: "/auto_aim/debug"
 
 | 字段 | 要求 |
 |---|---|
-| `header.stamp` | 与对应图像使用同一 ROS 时钟和对齐后的时间语义 |
+| `header.stamp` | 与图像共用同一 ROS 时钟；当前适配器写入 `rm_mqtt.now()+timestamp_offset_sec` |
 | `header.frame_id` | 当前版本不读取，不触发 TF 查询 |
 | `orientation.x/y/z/w` | IMU body 到绝对/世界方向的四元数，所有分量必须为有限数 |
 | `orientation_covariance[0]` | 为 `-1` 时表示姿态不可用，该样本会被拒绝 |
@@ -110,7 +146,24 @@ ROS 消息中的四元数排列为 `x, y, z, w`。程序内部按 Eigen 的构�
 
 当前版本不使用 `tf2`，因此仅填写 `frame_id` 不能纠正 IMU 安装方向。安装轴向差异必须通过 `R_gimbal2imubody` 配置。
 
-### 3.4 调试图像输出
+### 3.4 阵营输入
+
+消息类型为 `std_msgs/msg/Bool`，没有时间戳：
+
+| `data` | 己方 | 自瞄目标 |
+|---|---|---|
+| `true` | 红方 | 蓝方 |
+| `false` | 蓝方 | 红方 |
+
+收到首条阵营消息前，节点会正常读取图像和 IMU，但只发布 `control=false`、`shoot=false` 的安全
+结果。阵营首次到达或发生变化时，节点立即发布一条无源帧安全结果；目标颜色变化时 Tracker 会
+重置。每次算法结果还携带其计算开始时的阵营版本，发布前若版本已经变化，该结果会被替换为安全
+结果，避免旧阵营目标在竞态中下发。
+
+该 Bool 来自 `Aim_Tx.enem_color` 的项目约定映射。历史字段名容易误解，实际映射以
+`docs/Aim_Task_Protocol.md` 为准。
+
+### 3.5 调试图像输出
 
 存在 `/auto_aim/debug` 订阅者时，程序会为每个成功处理的输入帧生成包含检测框、EKF 模型、
 瞄准点和 Tracker 状态的 JPEG 调试图。消息类型为 `sensor_msgs/msg/CompressedImage`，其
@@ -155,7 +208,8 @@ JPEG 编码在独立线程执行，待编码槽位只保留最新一帧；编码
 
 `yaw_rad` 和 `pitch_rad` 是绝对角度指令，不是相对当前云台姿态的增量，也不是角速度。下游只有在 `control == true` 时才可使用它们。开火条件应至少同时满足 `control == true && shoot == true`。
 
-`shoot` 还受 YAML 中 `auto_fire` 控制；`auto_fire: false` 时不会给出开火许可。
+`shoot` 还受 YAML 中 `auto_fire` 控制；`auto_fire: false` 时不会给出开火许可。最终下发开火还要
+经过适配器的 `control.allow_fire` 总开关。
 
 ### 4.2 安全结果
 
@@ -173,7 +227,8 @@ JPEG 编码在独立线程执行，待编码槽位只保留最新一帧；编码
 }
 ```
 
-对于已经收到图像、但图像无效、IMU 无法配对、姿态无效、图像过期或分辨率变化等错误，安全结果可能保留该图像的 `stamp` 和计算出的非负 `latency_ms`，但控制字段仍满足：
+对于已经收到图像、但图像无效、IMU 无法配对、姿态无效、图像过期或分辨率变化等错误，安全结果
+可能保留该图像的 `stamp` 和计算出的非负 `latency_ms`，但控制字段仍满足：
 
 ```text
 control = false
@@ -181,20 +236,48 @@ shoot = false
 yaw_rad = pitch_rad = horizon_distance_m = 0
 ```
 
-协议故意不增加 `status` 字段。下游必须把 `control == false` 作为立即释放/忽略自瞄控制权的依据，不得无限期保持上一条有效指令；`shoot == false` 必须立即撤销开火许可。
+未收到阵营、阵营变化、结果对应的阵营版本过期，或 yaw、pitch、水平距离出现非有限数时，也会
+发布安全结果。协议故意不增加 `status` 字段。下游必须把 `control == false` 作为立即释放/忽略
+自瞄控制权的依据，不得无限期保持上一条有效指令；`shoot == false` 必须立即撤销开火许可。
+
+### 4.3 rm_mqtt 到 0x0311 的映射
+
+`rm_mqtt` 只消费 JSON 的 `control`、`shoot`、`yaw_rad` 和 `pitch_rad`；四个字段都必须存在且
+类型正确，两个角度必须是有限数。其余字段不会写入 `Aim_Rx`。
+
+| 条件 | `Aim_Rx.mode` | yaw/pitch |
+|---|---:|---|
+| `control=false` | `0` | 强制写零 |
+| `control=true, shoot=false` | `1` | 直接写入弧度值 |
+| `control=true, shoot=true, control.allow_fire=false` | `1` | 直接写入弧度值 |
+| `control=true, shoot=true, control.allow_fire=true` | `2` | 直接写入弧度值 |
+
+速度和加速度字段固定为零。适配器按 `control.max_send_rate_hz` 立即限频，超频消息不排队、不补发；
+MQTT 断线时跳过发送。完整 30 字节布局和 CRC 见 `docs/Aim_Task_Protocol.md`。
 
 ## 5. 时间戳、同步与低延迟策略
 
 ### 5.1 上游时间戳约定
 
-本系统接受“图像时间戳不是曝光时刻”的前提。`Image.header.stamp` 和 `Imu.header.stamp` 被解释为上游完成图像/姿态对齐后的发布时间，并且必须来自同一个 ROS 时钟。
+当前完整适配器没有相机曝光时间或 MCU 采样时间：
+
+- `rm_video` 在解码帧进入图像处理/JPEG 提交路径时写入
+  `Image.header.stamp = rm_video.now() + rm_video.timestamp_offset_sec`。
+- `rm_mqtt` 在有效 `0x0310` MQTT 回调中写入
+  `Imu.header.stamp = rm_mqtt.now() + rm_mqtt.timestamp_offset_sec`。
+
+因此两条时间戳必须来自同一个 ROS 时钟，但通常不会完全相等，也不能直接解释为曝光或 IMU 采样
+时刻。两个适配器偏移用于补偿两路固定相对偏差，`custom_client` 再按最近邻进行配对。项目没有额外
+的动态参数回调；修改任一 YAML 后都要重启对应节点。
 
 该时间戳有两个用途：
 
 1. 配对图像和 IMU。
 2. 估算消息发布后到自瞄输出之间的延迟，并将其加入目标预测时间。
 
-采集/曝光到上游发布时间之间没有体现在 `header.stamp` 中的固定延迟，应填入 `upstream_latency_ms`。
+图像实际采集到 `header.stamp` 所代表时刻之间仍未体现的非负固定延迟，应填入
+`upstream_latency_ms`。它只作用于自瞄内部预测和帧龄判断，不会改写 ROS 消息时间戳。调整视频
+`timestamp_offset_sec` 后应重新核对该值，避免重复补偿同一段延迟。
 
 ### 5.2 配对规则
 
@@ -205,12 +288,15 @@ yaw_rad = pitch_rad = horizon_distance_m = 0
 3. 暂时没有可用 IMU 时，最多等待 `sync_wait_ms`。
 4. 等待结束仍不能配对则拒绝该图像，并输出安全结果。
 
-默认参数为：
+当前仓库 `auto_aim/configs/custom_client.yaml` 为：
 
 ```yaml
-sync_tolerance_ms: 5
-sync_wait_ms: 10
+sync_tolerance_ms: 500
+sync_wait_ms: 1000
 ```
+
+这两个值决定姿态误配和等待延迟的上限，应根据录包分析结果收紧，不能用来掩盖两路时钟或固定
+偏移错误。字段从 YAML 缺失时，C++ 回退值分别是 `5 ms` 和 `10 ms`。
 
 图像使用单槽“最新帧”缓存：处理期间到达的新图像会覆盖尚未处理的旧图像，不会形成应用层历史帧积压。IMU 使用最多 200 条的环形历史缓存。
 
@@ -223,12 +309,14 @@ ros_age_ms = max(0, ROS_now - Image.header.stamp)
 effective_age_ms = ros_age_ms + upstream_latency_ms
 ```
 
-`effective_age_ms > max_frame_age_ms` 时拒绝该帧。默认值：
+`effective_age_ms > max_frame_age_ms` 时拒绝该帧。当前仓库配置为：
 
 ```yaml
-upstream_latency_ms: 0.0
-max_frame_age_ms: 100
+upstream_latency_ms: 150.0
+max_frame_age_ms: 1000
 ```
+
+字段缺失时的 C++ 回退值分别是 `0 ms` 和 `100 ms`。
 
 `upstream_latency_ms` 只对每一帧的内部稳态时间作固定前移，所以会增加预测补偿，但不会改变 Tracker 看到的相邻帧时间间隔。
 
@@ -240,11 +328,16 @@ latency_ms = max(0, result_publish_ros_time - Image.header.stamp)
 
 它不包含配置的 `upstream_latency_ms`，也不能表述为“相机曝光到结果发布”的完整端到端延迟。
 
-如果图像时间戳比当前 ROS 时间超前超过 `sync_tolerance_ms`，该帧会被视为时钟异常并拒绝。使用仿真时钟时，所有发布端和 `auv_client` 必须使用一致的 ROS 时钟配置。
+如果图像时间戳比当前 ROS 时间超前超过 `sync_tolerance_ms`，该帧会被视为时钟异常并拒绝。适配器
+不提供项目级 `use_sim_time` 特判；无论使用系统时钟还是仿真时钟，所有发布端和 `custom_client`
+都必须看到一致的 ROS 时钟。
 
 ### 5.4 输出看门狗
 
-`command_timeout_ms` 默认是 `200 ms`。超过该时间没有任何新结果时，看门狗发布一次无源帧安全结果，防止下游持续执行旧指令。持续没有输入时不会不断重复发送同一看门狗帧；恢复新结果后，看门狗重新计时。
+`command_timeout_ms` 同时用于等待新图像和输出看门狗。当前仓库配置为 `1000 ms`，字段缺失时的
+C++ 回退值为 `200 ms`。超过该时间没有新结果时，看门狗发布无源帧安全结果；主循环等待图像超时
+时也会发布安全结果。因此持续断流期间仍会按该超时量级周期性产生安全结果，而不会高频忙等或
+积压消息。任一新结果发布后重新计时。
 
 下游仍应实现自己的接收超时保护，不能仅依赖本节点看门狗。
 
@@ -351,20 +444,25 @@ pitch = -(ballistic_elevation + pitch_offset)
 
 ### 7.1 ROS、同步和安全参数
 
-| 配置项 | 默认值 | 单位 | 说明 |
-|---|---:|---|---|
-| `ros_image_topic` | `/camera/image_raw` | — | 图像输入话题 |
-| `ros_imu_topic` | `/imu/data` | — | IMU 输入话题 |
-| `ros_result_topic` | `/auto_aim/result` | — | JSON 结果输出话题 |
-| `ros_debug_topic` | `/auto_aim/debug` | — | JPEG 调试图像输出话题 |
-| `bullet_speed` | `23.0` | m/s | 弹丸初速，必须大于 0 |
-| `upstream_latency_ms` | `0.0` | ms | 采集到上游发布时间的固定估计延迟 |
-| `sync_tolerance_ms` | `5` | ms | 图像/IMU 最大配对时间差 |
-| `sync_wait_ms` | `10` | ms | 等待匹配 IMU 的最长时间 |
-| `max_frame_age_ms` | `100` | ms | 包含上游固定延迟的最大有效帧龄 |
-| `command_timeout_ms` | `200` | ms | 输出看门狗超时 |
+下表区分仓库当前 YAML 的有效值和字段缺失时的 C++ 回退值。部署行为以实际加载的 YAML 为准，
+回退值不是建议调参值。
+
+| 配置项 | 当前仓库值 | 缺省回退值 | 单位 | 说明 |
+|---|---:|---:|---|---|
+| `ros_image_topic` | `/rm_video/image_processed` | `/camera/image_raw` | - | 压缩图像输入话题 |
+| `ros_imu_topic` | `/rm_mqtt/imu` | `/imu/data` | - | IMU 输入话题 |
+| `ros_self_is_red_topic` | `/rm_mqtt/self_is_red` | `/rm_mqtt/self_is_red` | - | 阵营输入；当前 YAML 未显式写出，使用回退值 |
+| `ros_result_topic` | `/auto_aim/result` | `/auto_aim/result` | - | JSON 结果输出话题 |
+| `ros_debug_topic` | `/auto_aim/debug` | `/auto_aim/debug` | - | JPEG 调试图像输出话题 |
+| `bullet_speed` | `24.0` | `23.0` | m/s | 弹丸初速，必须为正 |
+| `upstream_latency_ms` | `150.0` | `0.0` | ms | 未体现在图像时间戳中的固定估计延迟 |
+| `sync_tolerance_ms` | `500` | `5` | ms | 图像/IMU 最大配对时间差 |
+| `sync_wait_ms` | `1000` | `10` | ms | 等待匹配 IMU 的最长时间 |
+| `max_frame_age_ms` | `1000` | `100` | ms | 包含上游固定延迟的最大有效帧龄 |
+| `command_timeout_ms` | `1000` | `200` | ms | 输入等待和输出看门狗超时 |
 
 所有时间和弹速参数必须为有限数；延迟不得为负，并且 `upstream_latency_ms` 必须小于 `max_frame_age_ms`。
+虽然配置校验允许较小正弹速，Aimer 当前会把小于 `14 m/s` 的值替换为 `23 m/s`。
 
 ### 7.2 相机内参
 
@@ -387,9 +485,27 @@ t_camera2gimbal:  [tx, ty, tz]
 
 矩阵按行展开。`t_camera2gimbal` 单位为米。`R_gimbal2imubody` 必须是正交、行列式为 `+1` 的右手旋转矩阵。
 
-### 7.4 自瞄与火控参数
+### 7.4 识别、自瞄与火控参数
 
-`enemy_color`、Detector、Tracker、Aimer 和 Shooter 参数沿用项目原有 UAV 自瞄链路。与外部控制接口直接相关的参数包括：
+活动识别配置为：
+
+```yaml
+yolo_name: yolov5
+yolov5_model_path: auto_aim/models/0526.onnx
+yolov5_color_order: blue_red_gray_purple
+device: GPU
+min_confidence: 0.8
+```
+
+模型必须有且仅有一个 FP16 `[1,3,640,640]` 输入和一个 FP32 `[1,25200,22]` 输出。图像保持现有
+左上角 letterbox、BGR 到 RGB、`1/255` 归一化、关键点顺序、阈值和 NMS 语义。`0708.onnx` 和
+`models/` 中其他模型只归档备用。
+
+装甲 PnP 尺寸按当前赛制固定：英雄使用 `230 x 56 mm` 大装甲，哨兵、工程、3/4/5 号步兵、
+前哨站和基地均使用 `135 x 56 mm` 小装甲。当前不保留平衡步兵或两装甲底盘模型；0526 模型的
+两个历史基地类别均按小装甲基地处理。基地仍使用三块装甲、`0.3205 m` 回转半径的跟踪布局。
+
+`enemy_color`、Tracker、Aimer 和 Shooter 参数沿用项目原有 UAV 自瞄链路。与外部控制接口直接相关的参数包括：
 
 | 配置项 | 单位 | 说明 |
 |---|---|---|
@@ -402,7 +518,7 @@ t_camera2gimbal:  [tx, ty, tz]
 | `judge_distance` | m | 近/远开火阈值切换距离 |
 | `auto_fire` | boolean | 是否允许输出 `shoot=true` |
 
-完整默认项和注释见 `auto_aim/configs/AUVClient.yaml`。
+完整当前配置和注释见 `auto_aim/configs/custom_client.yaml`。
 
 ### 7.5 2026 前哨站预测
 
@@ -429,7 +545,7 @@ ros_image_topic: "/calibration/image_raw"
 ros_imu_topic: "/rm_mqtt/imu"
 ```
 
-`auv_client` 运行时订阅 `CompressedImage`，但两个标定工具订阅的是原始 `sensor_msgs/Image`。
+`custom_client` 运行时订阅 `CompressedImage`，但两个标定工具订阅的是原始 `sensor_msgs/Image`。
 当前适配器输出需要先临时解码，并通过 QoS override 兼容视频发布端的 best-effort QoS：
 
 ```bash
@@ -455,12 +571,12 @@ ros2 run image_transport republish --ros-args \
 
 操作流程：
 
-1. 保持发布端持续发布固定分辨率原始图像。
+1. 保持转换端持续发布固定分辨率、与运行时 processed 画面一致的原始 `Image`。
 2. 标定板被正确识别时按 `s` 接受当前帧。
 3. 让标定板覆盖画面中心、四角、远近位置和不同倾角，建议采集至少 10 帧。
 4. 按 `q` 结束采样并求解。
 
-输出目录包含采集图像和 `calibration_result.yaml`。将以下字段复制到 `auto_aim/configs/AUVClient.yaml`，也复制到手眼标定使用的 `auto_aim/configs/calibration.yaml`：
+输出目录包含采集图像和 `calibration_result.yaml`。将以下字段复制到 `auto_aim/configs/custom_client.yaml`，也复制到手眼标定使用的 `auto_aim/configs/calibration.yaml`：
 
 - `calibration_image_width`
 - `calibration_image_height`
@@ -485,7 +601,7 @@ ros2 run image_transport republish --ros-args \
 5. 至少需要 3 组有效姿态，建议采集 10 组以上且旋转差异明显的姿态。
 6. 按 `q` 求解。
 
-输出目录包含图像、对应四元数文本和 `handeye_result.yaml`。将以下字段复制到 `auto_aim/configs/AUVClient.yaml`：
+输出目录包含图像、对应四元数文本和 `handeye_result.yaml`。将以下字段复制到 `auto_aim/configs/custom_client.yaml`：
 
 - `R_gimbal2imubody`
 - `R_camera2gimbal`
@@ -495,18 +611,20 @@ ros2 run image_transport republish --ros-args \
 
 ## 9. 上下游集成要求
 
-### 9.1 图像/IMU 发布端
+### 9.1 图像、IMU 与阵营发布端
 
 发布端必须满足：
 
-- 两条消息使用同一 ROS 时钟和一致的 `header.stamp` 语义。
-- 上游已经完成“某帧图像对应哪个姿态”的时间对齐。
+- 图像和 IMU 使用同一 ROS 时钟；当前适配器分别按各自节点的 `now()+timestamp_offset_sec` 写入。
+- 测量并配置两路固定时间偏移，使真实对应样本的时间差落在 `sync_tolerance_ms` 内。
 - `CompressedImage.data` 可被 OpenCV 解码，且解码后的图像分辨率和宽高比在运行期间保持固定。
 - IMU 发布 body 到 absolute/world 的有效、有限、非零四元数。
-- 采用与 best-effort 传感器订阅兼容的 QoS，建议 depth 1。
+- 发布有效的 `/rm_mqtt/self_is_red`；`true` 表示己方红、目标蓝，`false` 表示己方蓝、目标红。
+- 全部实时话题使用 best-effort、volatile、keep last 1。
 - 同机高带宽图像场景优先启用 DDS 共享内存，并检查实际 DDS 配置是否生效。
 
-如果发布端无法使用对齐后的同时间戳，可发布各自真实时间，但差值必须落在 `sync_tolerance_ms` 内；节点只做最近邻配对，不做姿态插值。
+节点只做最近邻配对，不做姿态插值。不要通过增大 QoS depth、`sync_tolerance_ms` 或
+`sync_wait_ms` 保存历史数据来掩盖时间戳偏移和处理性能问题。
 
 ### 9.2 控制/发射接收端
 
@@ -519,24 +637,30 @@ ros2 run image_transport republish --ros-args \
 - 按“yaw 世界绝对角、pitch 向上为负”的约定对接控制器。
 - 不依赖协议中不存在的 `status` 字段。
 
+当前 `rm_mqtt` 会校验 JSON 字段和有限数，但不会根据 `stamp` 拒绝过期结果；它在 ROS 回调中直接
+编码并发布。因此机器人 MCU 必须设置独立的 `0x0311` 接收超时，并在超时、校验失败或
+`mode=0` 时撤销开火和旧控制。
+
 ## 10. 检查与排障
 
 可以先检查 ROS 图和 QoS：
 
 ```bash
-ros2 node info /auv_client
-ros2 topic info --verbose /camera/image_raw
-ros2 topic info --verbose /imu/data
-ros2 topic echo /auto_aim/result
+ros2 node info /custom_client
+ros2 topic info --verbose /rm_video/image_processed
+ros2 topic info --verbose /rm_mqtt/imu
+ros2 topic echo --qos-reliability best_effort --once /rm_mqtt/self_is_red
+ros2 topic echo --qos-reliability best_effort /auto_aim/result
 ```
 
 常见问题：
 
 | 现象 | 可能原因 | 处理 |
 |---|---|---|
-| CMake 不生成 `auv_client` | ROS 环境未 source，或缺少标准消息包 | source ROS 2 后重新执行 CMake，检查 `rclcpp/sensor_msgs/std_msgs` |
-| 启动立即退出 | 标定宽高为 0、YAML 缺字段或时间参数非法 | 写入真实标定尺寸并检查 `auto_aim/configs/AUVClient.yaml` |
-| 一直输出 `control=false` | 无目标、图像非法、IMU 无效、配对失败或帧过期 | 查看日志，并分别 echo 两个输入话题 |
+| CMake 不生成 `custom_client` | ROS 环境未 source，或缺少标准消息包 | source ROS 2 后重新执行 CMake，检查 `rclcpp/sensor_msgs/std_msgs` |
+| CMake 提示找不到 ONNX Runtime/CUDA | 尚未全局安装依赖，或安装位置被修改 | 按根 README 的“安装依赖”章节安装；自定义 ORT 位置时设置 `ONNXRUNTIME_ROOT` |
+| 启动立即退出 | CUDA Provider/模型契约异常、标定宽高为 0、YAML 缺字段或参数非法 | 查看启动错误；确认 `device`、0526 模型、CUDA/cuDNN 和标定配置 |
+| 一直输出 `control=false` | 未收到阵营、无目标、图像非法、IMU 无效、配对失败或帧过期 | 查看日志，分别 echo 三个输入话题 |
 | 图像有数据但节点拒绝 | 压缩负载损坏、宽高比错误或解码后尺寸在运行中改变 | 检查视频解码/编码错误并固定分辨率 |
 | 经常提示 IMU 无法匹配 | 两路时钟/时间戳语义不一致或容差过小 | 修正上游对齐，测量时间差后谨慎调整同步参数 |
 | 提示图像过期 | ROS 时钟不同步、处理堵塞或上游延迟未配置合理 | 统一时钟，降低队列深度，检查 `upstream_latency_ms` 和帧率 |
@@ -544,7 +668,11 @@ ros2 topic echo /auto_aim/result
 | 静止时角度正确、转动后错误 | IMU body→world 方向或轴映射错误 | 在手眼标定预览中检查 yaw/pitch/roll 方向 |
 | 近距离大致正确、远距离偏差明显 | 内参、畸变、外参、弹速或单位错误 | 重新标定并确认平移为米、弹速为 m/s |
 | `latency_ms` 小于实际端到端延迟 | 时间戳是上游发布时间而非曝光时间 | 这是预期行为；用 `upstream_latency_ms` 补偿固定前段延迟 |
+| ROS 有 `shoot=true` 但 MCU 不开火 | `control=false`、适配器 `control.allow_fire=false`、MQTT 断线或 MCU 超时 | 逐层检查 JSON、rm_mqtt 统计、0x0311 mode 和两级开火开关 |
 
 ## 11. 协议版本注意事项
 
-当前接口以固定 JSON 字段集对外提供结果，没有单独的 ROS 自定义消息、状态码或 TF 接口。集成方应按字段名解析 JSON，不依赖 JSON 键顺序或浮点数字符串精度。未来若扩展协议，建议在保持现有字段语义的前提下增加显式版本字段，并同步更新本手册。
+当前接口以固定 JSON 字段集对外提供结果，没有单独的 ROS 自定义消息、状态码或 TF 接口。集成方
+应按字段名解析 JSON，不依赖 JSON 键顺序或浮点数字符串精度。字段、单位、时间语义、坐标系或
+安全语义变更时，必须同步修改 `custom_client`、`rm_mqtt`、根 README、
+`docs/Aim_Task_Protocol.md` 和本手册。

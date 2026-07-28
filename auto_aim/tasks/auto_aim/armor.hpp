@@ -51,17 +51,16 @@ enum ArmorPriority
 // clang-format off
 const std::vector<std::tuple<Color, ArmorName, ArmorType>> armor_properties = {
   {blue, sentry, small},     {red, sentry, small},     {extinguish, sentry, small},
-  {blue, one, small},        {red, one, small},        {extinguish, one, small},
+  {blue, one, big},          {red, one, big},          {extinguish, one, big},
   {blue, two, small},        {red, two, small},        {extinguish, two, small},
   {blue, three, small},      {red, three, small},      {extinguish, three, small},
   {blue, four, small},       {red, four, small},       {extinguish, four, small},
   {blue, five, small},       {red, five, small},       {extinguish, five, small},
   {blue, outpost, small},    {red, outpost, small},    {extinguish, outpost, small},
-  {blue, base, big},         {red, base, big},         {extinguish, base, big},      {purple, base, big},       
-  {blue, base, small},       {red, base, small},       {extinguish, base, small},    {purple, base, small},    
-  {blue, three, big},        {red, three, big},        {extinguish, three, big}, 
-  {blue, four, big},         {red, four, big},         {extinguish, four, big},  
-  {blue, five, big},         {red, five, big},         {extinguish, five, big}};
+  {blue, base, small},       {red, base, small},       {extinguish, base, small},
+  {purple, base, small},     {blue, base, small},      {red, base, small},
+  {extinguish, base, small}, {purple, base, small},
+};
 // clang-format on
 
 struct Lightbar

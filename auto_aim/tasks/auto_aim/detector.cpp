@@ -1,9 +1,7 @@
 #include "detector.hpp"
 
-#include <fmt/chrono.h>
+#include <fmt/format.h>
 #include <yaml-cpp/yaml.h>
-
-#include <filesystem>
 
 #include "tools/img_tools.hpp"
 #include "tools/logger.hpp"
@@ -25,9 +23,6 @@ Detector::Detector(const std::string & config_path, bool debug)
   max_side_ratio_ = yaml["max_side_ratio"].as<double>();
   min_confidence_ = yaml["min_confidence"].as<double>();
   max_rectangular_error_ = yaml["max_rectangular_error"].as<double>() / 57.3;  // degree to rad
-
-  save_path_ = "patterns";
-  std::filesystem::create_directory(save_path_);
 }
 
 std::list<Armor> Detector::detect(const cv::Mat & bgr_img, int frame_count)
@@ -251,9 +246,6 @@ bool Detector::check_name(const Armor & armor) const
   auto name_ok = armor.name != ArmorName::not_armor;
   auto confidence_ok = armor.confidence > min_confidence_;
 
-  // 保存不确定的图案，用于分类器的迭代
-  if (name_ok && !confidence_ok) save(armor);
-
   // 出现 5号 则显示 debug 信息。但不过滤。
   if (armor.name == ArmorName::five) tools::logger()->debug("See pattern 5");
 
@@ -262,15 +254,12 @@ bool Detector::check_name(const Armor & armor) const
 
 bool Detector::check_type(const Armor & armor) const
 {
-  auto name_ok = armor.type == ArmorType::small
-                   ? (armor.name != ArmorName::one && armor.name != ArmorName::base)
-                   : (armor.name == ArmorName::one || armor.name == ArmorName::base);
+  auto name_ok = armor.type == ArmorType::big ? armor.name == ArmorName::one
+                                               : armor.name != ArmorName::one;
 
-  // 保存异常的图案，用于分类器的迭代
   if (!name_ok) {
     tools::logger()->debug(
       "see strange armor: {} {}", ARMOR_TYPES[armor.type], ARMOR_NAMES[armor.name]);
-    save(armor);
   }
 
   return name_ok;
@@ -310,31 +299,7 @@ cv::Mat Detector::get_pattern(const cv::Mat & bgr_img, const Armor & armor) cons
 
 ArmorType Detector::get_type(const Armor & armor)
 {
-  /// 优先根据当前armor.ratio判断
-  /// TODO: 25赛季是否还需要根据比例判断大小装甲？能否根据图案直接判断？
-
-  if (armor.ratio > 3.0) {
-    // tools::logger()->debug(
-    //   "[Detector] get armor type by ratio: BIG {} {:.2f}", ARMOR_NAMES[armor.name], armor.ratio);
-    return ArmorType::big;
-  }
-
-  if (armor.ratio < 2.5) {
-    // tools::logger()->debug(
-    //   "[Detector] get armor type by ratio: SMALL {} {:.2f}", ARMOR_NAMES[armor.name], armor.ratio);
-    return ArmorType::small;
-  }
-
-  // tools::logger()->debug("[Detector] get armor type by name: {}", ARMOR_NAMES[armor.name]);
-
-  // 英雄、基地只能是大装甲板
-  if (armor.name == ArmorName::one || armor.name == ArmorName::base) {
-    return ArmorType::big;
-  }
-
-  // 其他所有（工程、哨兵、前哨站、步兵）都是小装甲板
-  /// TODO: 基地顶装甲是小装甲板
-  return ArmorType::small;
+  return armor.name == ArmorName::one ? ArmorType::big : ArmorType::small;
 }
 
 cv::Point2f Detector::get_center_norm(const cv::Mat & bgr_img, const cv::Point2f & center) const
@@ -342,13 +307,6 @@ cv::Point2f Detector::get_center_norm(const cv::Mat & bgr_img, const cv::Point2f
   auto h = bgr_img.rows;
   auto w = bgr_img.cols;
   return {center.x / w, center.y / h};
-}
-
-void Detector::save(const Armor & armor) const
-{
-  auto file_name = fmt::format("{:%Y-%m-%d_%H-%M-%S}", std::chrono::system_clock::now());
-  auto img_path = fmt::format("{}/{}_{}.jpg", save_path_, armor.name, file_name);
-  cv::imwrite(img_path, armor.pattern);
 }
 
 void Detector::show_result(

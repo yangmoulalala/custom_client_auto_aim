@@ -27,12 +27,13 @@ const std::string keys =
   "{help h usage ? |                        | 输出命令行参数说明}"
   "{debug d        | false                  | 每秒输出输入、识别、跟踪和控制调试数据}"
   "{show           | false                  | 显示检测、EKF预测和瞄准结果，按q退出}"
-  "{@config-path   | auto_aim/configs/AUVClient.yaml | YAML配置文件路径}";
+  "{@config-path   | auto_aim/configs/custom_client.yaml | YAML配置文件路径}";
 
 namespace
 {
 constexpr std::size_t READ_STATUS_COUNT = 6;
-constexpr char DEBUG_WINDOW_NAME[] = "AUV auto aim";
+constexpr char LOGGER_NAME[] = "auto_aim";
+constexpr char DEBUG_WINDOW_NAME[] = "Custom client auto aim";
 const cv::Scalar DETECTION_COLOR{0, 220, 0};
 const cv::Scalar EKF_COLOR{255, 255, 0};
 const cv::Scalar AIM_COLOR{0, 0, 255};
@@ -229,7 +230,7 @@ int main(int argc, char * argv[])
   }
 
   rclcpp::init(argc, argv);
-  const auto logger = rclcpp::get_logger("auto_aim");
+  const auto logger = rclcpp::get_logger(LOGGER_NAME);
 
   try {
     const auto yaml = YAML::LoadFile(config_path);

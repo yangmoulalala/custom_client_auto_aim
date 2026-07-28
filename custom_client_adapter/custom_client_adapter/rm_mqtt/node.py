@@ -6,7 +6,6 @@ import time
 import rclpy
 from rclpy.duration import Duration
 from rclpy.node import Node
-from rclpy.parameter import Parameter
 from rclpy.qos import DurabilityPolicy
 from rclpy.qos import HistoryPolicy
 from rclpy.qos import QoSProfile
@@ -29,14 +28,15 @@ class RmMqttNode(Node):
 
         host = self.declare_parameter('mqtt.host', '192.168.12.1').value
         port = self.declare_parameter('mqtt.port', 3333).value
-        client_id = self.declare_parameter(
-            'mqtt.client_id', Parameter.Type.STRING
-        ).value
-        if client_id is None:
-            raise ValueError('Required ROS parameter mqtt.client_id was not provided')
         keepalive_sec = self.declare_parameter('mqtt.keepalive_sec', 10).value
         reconnect_interval_sec = self.declare_parameter(
-            'mqtt.reconnect_interval_sec', 1
+            'mqtt.reconnect_interval_sec', 0.1
+        ).value
+        tcp_connect_timeout_sec = self.declare_parameter(
+            'mqtt.tcp_connect_timeout_sec', 1.0
+        ).value
+        connack_timeout_sec = self.declare_parameter(
+            'mqtt.connack_timeout_sec', 1.0
         ).value
         subscription_topic = self.declare_parameter(
             'mqtt.subscription_topic', 'CustomByteBlock'
@@ -76,9 +76,10 @@ class RmMqttNode(Node):
         self._validate_parameters(
             host=host,
             port=port,
-            client_id=client_id,
             keepalive_sec=keepalive_sec,
             reconnect_interval_sec=reconnect_interval_sec,
+            tcp_connect_timeout_sec=tcp_connect_timeout_sec,
+            connack_timeout_sec=connack_timeout_sec,
             subscription_topic=subscription_topic,
             control_mqtt_topic=self._control_mqtt_topic,
             imu_topic=imu_topic,
@@ -118,6 +119,8 @@ class RmMqttNode(Node):
         self._statistics = PacketStatistics()
         self._minimum_control_period_sec = 1.0 / max_send_rate_hz
         self._last_control_publish_time = None
+        self._logged_client_id = None
+        self._last_disconnect_log_time = None
         self._last_statistics_time = time.monotonic()
         self._statistics_timer = self.create_timer(
             self._statistics_window_sec,
@@ -126,9 +129,10 @@ class RmMqttNode(Node):
         self._transport = MqttTransport(
             host=host,
             port=port,
-            client_id=client_id,
             keepalive_sec=keepalive_sec,
             reconnect_interval_sec=reconnect_interval_sec,
+            tcp_connect_timeout_sec=tcp_connect_timeout_sec,
+            connack_timeout_sec=connack_timeout_sec,
             subscription_topic=subscription_topic,
             message_callback=self._handle_message,
         )
@@ -148,17 +152,23 @@ class RmMqttNode(Node):
         require(bool(parameters['host']), 'mqtt.host must not be empty')
         require(1 <= parameters['port'] <= 65535, 'mqtt.port is out of range')
         require(
-            str(parameters['client_id']).isdecimal()
-            and int(parameters['client_id']) > 0,
-            'ROS parameter mqtt.client_id must be a positive integer string',
-        )
-        require(
             parameters['keepalive_sec'] > 0,
             'mqtt.keepalive_sec must be positive',
         )
         require(
-            parameters['reconnect_interval_sec'] > 0,
-            'mqtt.reconnect_interval_sec must be positive',
+            math.isfinite(parameters['reconnect_interval_sec'])
+            and parameters['reconnect_interval_sec'] > 0.0,
+            'mqtt.reconnect_interval_sec must be positive and finite',
+        )
+        require(
+            math.isfinite(parameters['tcp_connect_timeout_sec'])
+            and parameters['tcp_connect_timeout_sec'] > 0.0,
+            'mqtt.tcp_connect_timeout_sec must be positive and finite',
+        )
+        require(
+            math.isfinite(parameters['connack_timeout_sec'])
+            and parameters['connack_timeout_sec'] > 0.0,
+            'mqtt.connack_timeout_sec must be positive and finite',
         )
         require(
             bool(parameters['subscription_topic']),
@@ -272,8 +282,22 @@ class RmMqttNode(Node):
         snapshot = self._statistics.take_snapshot()
 
         if not self._transport.connected:
-            self.get_logger().warning('MQTT disconnected')
+            self._logged_client_id = None
+            if (
+                self._last_disconnect_log_time is None
+                or now - self._last_disconnect_log_time >= 1.0
+            ):
+                self.get_logger().warning(
+                    f'MQTT disconnected client_id={self._transport.client_id} '
+                    f'reason={self._transport.last_error}'
+                )
+                self._last_disconnect_log_time = now
             return
+
+        client_id = self._transport.client_id
+        if self._logged_client_id != client_id:
+            self.get_logger().info(f'MQTT connected client_id={client_id}')
+            self._logged_client_id = client_id
 
         tx_rate = round(snapshot.tx_packets / elapsed)
         rx_rate = round(snapshot.rx_packets / elapsed)

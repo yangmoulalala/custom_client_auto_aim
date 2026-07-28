@@ -1,0 +1,12 @@
+enemy_color: red
+min_detect_count: 1
+max_temp_lost_count: 1
+outpost_max_temp_lost_count: 1
+
+R_gimbal2imubody: [1, 0, 0, 0, 1, 0, 0, 0, 1]
+R_camera2gimbal: [1, 0, 0, 0, 1, 0, 0, 0, 1]
+t_camera2gimbal: [0, 0, 0]
+camera_matrix: [1000, 0, 640, 0, 1000, 360, 0, 0, 1]
+distort_coeffs: [0, 0, 0, 0, 0]
+calibration_image_width: 1280
+calibration_image_height: 720

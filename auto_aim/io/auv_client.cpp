@@ -69,7 +69,7 @@ AUVClient::AUVClient(const std::string & config_path)
     upstream_latency_ms_ >= max_frame_age_ms_) {
     throw std::runtime_error("Invalid AUVClient timing or bullet-speed configuration");
   }
-  node_ = std::make_shared<rclcpp::Node>("auv_client");
+  node_ = std::make_shared<rclcpp::Node>("custom_client");
   auto sensor_qos = rclcpp::SensorDataQoS().keep_last(1).best_effort();
 
   image_subscription_ = node_->create_subscription<ImageMsg>(

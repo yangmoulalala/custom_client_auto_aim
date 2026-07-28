@@ -1,9 +1,7 @@
 #include "yolo11.hpp"
 
-#include <fmt/chrono.h>
+#include <fmt/format.h>
 #include <yaml-cpp/yaml.h>
-
-#include <filesystem>
 
 #include "tools/img_tools.hpp"
 #include "tools/logger.hpp"
@@ -28,8 +26,6 @@ YOLO11::YOLO11(const std::string & config_path, bool debug)
   roi_ = cv::Rect(x, y, width, height);
   offset_ = cv::Point2f(x, y);
 
-  save_path_ = "imgs";
-  std::filesystem::create_directory(save_path_);
   auto model = core_.read_model(model_path_);
   ov::preprocess::PrePostProcessor ppp(model);
   auto & input = ppp.input();
@@ -61,7 +57,6 @@ std::list<Armor> YOLO11::detect(const cv::Mat & raw_img, int frame_count)
   }
 
   cv::Mat bgr_img;
-  tmp_img_ = raw_img;
   if (use_roi_) {
     if (roi_.width == -1) {  // -1 表示该维度不裁切
       roi_.width = raw_img.cols;
@@ -180,21 +175,13 @@ bool YOLO11::check_name(const Armor & armor) const
   auto name_ok = armor.name != ArmorName::not_armor;
   auto confidence_ok = armor.confidence > min_confidence_;
 
-  // 保存不确定的图案，用于神经网络的迭代
-  // if (name_ok && !confidence_ok) save(armor);
-
   return name_ok && confidence_ok;
 }
 
 bool YOLO11::check_type(const Armor & armor) const
 {
-  auto name_ok = (armor.type == ArmorType::small)
-                   ? (armor.name != ArmorName::one && armor.name != ArmorName::base)
-                   : (armor.name != ArmorName::two && armor.name != ArmorName::sentry &&
-                      armor.name != ArmorName::outpost);
-
-  // 保存异常的图案，用于神经网络的迭代
-  // if (!name_ok) save(armor);
+  auto name_ok = armor.type == ArmorType::big ? armor.name == ArmorName::one
+                                               : armor.name != ArmorName::one;
 
   return name_ok;
 }
@@ -253,13 +240,6 @@ void YOLO11::draw_detections(
   }
   cv::resize(detection, detection, {}, 0.5, 0.5);  // 显示时缩小图片尺寸
   cv::imshow("detection", detection);
-}
-
-void YOLO11::save(const Armor & armor) const
-{
-  auto file_name = fmt::format("{:%Y-%m-%d_%H-%M-%S}", std::chrono::system_clock::now());
-  auto img_path = fmt::format("{}/{}_{}.jpg", save_path_, armor.name, file_name);
-  cv::imwrite(img_path, tmp_img_);
 }
 
 std::list<Armor> YOLO11::postprocess(
