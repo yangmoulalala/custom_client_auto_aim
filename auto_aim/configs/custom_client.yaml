@@ -16,7 +16,7 @@ ros_debug_topic: "/auto_aim/debug"
 bullet_speed: 24.0
 # header.stamp 未包含的固定图像延迟，ms，范围 [0,max_frame_age_ms)；增大将增加预测前推量。
 # 不修改 ROS 时间戳，不参与图像/IMU 配对，也不改变 Tracker 相邻帧 dt。
-upstream_latency_ms: 150.0
+upstream_latency_ms: 80.0
 
 # camera_matrix 标定图像尺寸，pixel，正整数。运行画面可同比缩放，宽高比误差不得超过 1%。
 calibration_image_width: 480
