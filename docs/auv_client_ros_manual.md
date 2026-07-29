@@ -166,8 +166,9 @@ ROS 消息中的四元数排列为 `x, y, z, w`。程序内部按 Eigen 的构�
 ### 3.5 调试图像输出
 
 存在 `/auto_aim/debug` 订阅者时，程序会为每个成功处理的输入帧生成包含检测框、EKF 模型、
-瞄准点和 Tracker 状态的 JPEG 调试图。消息类型为 `sensor_msgs/msg/CompressedImage`，其
-`header.stamp` 与对应输入图像一致。
+瞄准点、Tracker 状态和当前匹配装甲板解算距离的 JPEG 调试图。距离单位为 m；本帧没有匹配到
+当前目标或距离无效时，左上状态面板显示 `Distance: --`，不沿用上一帧或 EKF 预测距离。消息类型为
+`sensor_msgs/msg/CompressedImage`，其 `header.stamp` 与对应输入图像一致。
 
 JPEG 编码在独立线程执行，待编码槽位只保留最新一帧；编码速度低于处理速度时会覆盖旧调试帧，
 不会积压并影响控制链路。发布器始终启用，不受 `--debug` 或 `--show` 控制；没有订阅者时跳过

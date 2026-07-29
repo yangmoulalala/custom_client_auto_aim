@@ -128,13 +128,28 @@ void draw_aimed_armor(
   draw_text_with_shadow(image, "AIM", center + cv::Point(10, -10), AIM_COLOR, 0.55, 2);
 }
 
+std::optional<double> matched_armor_distance(
+  const std::list<auto_aim::Armor> & armors, const std::list<auto_aim::Target> & targets)
+{
+  if (targets.empty()) return std::nullopt;
+
+  const auto & target = targets.front();
+  for (const auto & armor : armors) {
+    if (armor.name != target.name || armor.type != target.armor_type) continue;
+
+    const double distance = armor.ypd_in_world[2];
+    if (std::isfinite(distance) && distance > 0.0) return distance;
+  }
+  return std::nullopt;
+}
+
 void draw_status_panel(
   cv::Mat & image, const std::list<auto_aim::Target> & targets, const std::string & tracker_state,
-  std::uint64_t frame_count)
+  std::uint64_t frame_count, const std::optional<double> & armor_distance)
 {
   std::vector<std::string> lines;
   if (targets.empty()) {
-    lines = {"Target: none", "Spin: --"};
+    lines = {"Target: none", "Distance: --", "Spin: --"};
   } else {
     const auto & target = targets.front();
     const auto state = target.ekf_x();
@@ -144,6 +159,7 @@ void draw_status_panel(
       fmt::format(
         "Target: {} / {}", auto_aim::ARMOR_NAMES[target.name],
         auto_aim::ARMOR_TYPES[target.armor_type]),
+      armor_distance ? fmt::format("Distance: {:.2f} m", *armor_distance) : "Distance: --",
       fmt::format("Spin: {:+.3f} rad/s ({:+.1f} rpm)", angular_velocity, rpm)};
   }
   lines.push_back(fmt::format("Tracker: {}  Frame: {}", tracker_state, frame_count));
@@ -179,7 +195,7 @@ cv::Mat make_debug_image(
   const cv::Mat & image, const std::list<auto_aim::Armor> & detections,
   const std::list<auto_aim::Target> & targets, const auto_aim::Aimer & aimer,
   const auto_aim::Solver & solver, const io::Command & command, const std::string & tracker_state,
-  std::uint64_t frame_count)
+  std::uint64_t frame_count, const std::optional<double> & armor_distance)
 {
   auto debug_image = image.clone();
   draw_detections(debug_image, detections);
@@ -188,7 +204,7 @@ cv::Mat make_debug_image(
     draw_ekf_model(debug_image, target, solver);
     draw_aimed_armor(debug_image, target, aimer, solver, command);
   }
-  draw_status_panel(debug_image, targets, tracker_state, frame_count);
+  draw_status_panel(debug_image, targets, tracker_state, frame_count, armor_distance);
   return debug_image;
 }
 
@@ -344,6 +360,7 @@ int main(int argc, char * argv[])
       auto armors = detector.detect(frame.image);
       const auto detections = armors;
       auto targets = tracker.track(armors, frame.timestamp);
+      const auto armor_distance = matched_armor_distance(armors, targets);
       auto command = aimer.aim(targets, frame.timestamp, client.bullet_speed(), true);
       command.shoot = shooter.shoot(command, aimer, targets, gimbal_ypr);
       client.publish(command, &frame, team_color->revision);
@@ -353,7 +370,8 @@ int main(int argc, char * argv[])
       const bool publish_debug = client.debug_publish_ready();
       if (show || publish_debug) {
         auto debug_image = make_debug_image(
-          frame.image, detections, targets, aimer, solver, command, tracker.state(), frame_count);
+          frame.image, detections, targets, aimer, solver, command, tracker.state(), frame_count,
+          armor_distance);
         if (publish_debug) client.publish_debug(debug_image, frame.source_stamp);
         if (show) {
           cv::imshow(DEBUG_WINDOW_NAME, debug_image);

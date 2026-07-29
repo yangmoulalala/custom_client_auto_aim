@@ -149,7 +149,7 @@ Runtime 以及 GPU 模式下的 CUDA 上下文和首次执行内核初始化，�
 | `/rm_mqtt/imu` | `sensor_msgs/msg/Imu` | 裁判系统提供的姿态四元数 |
 | `/rm_mqtt/self_is_red` | `std_msgs/msg/Bool` | 己方阵营，`true` 表示红方 |
 | `/auto_aim/result` | `std_msgs/msg/String` | 自瞄控制结果 JSON |
-| `/auto_aim/debug` | `sensor_msgs/msg/CompressedImage` | 检测、跟踪、瞄准点和处理状态 |
+| `/auto_aim/debug` | `sensor_msgs/msg/CompressedImage` | 检测、装甲板距离、跟踪、瞄准点和处理状态 |
 
 ```bash
 ros2 topic list
