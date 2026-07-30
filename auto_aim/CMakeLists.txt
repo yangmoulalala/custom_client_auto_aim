@@ -171,6 +171,14 @@ if(BUILD_TESTING)
         aimer_spin_selection_test PRIVATE ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim tools)
     add_test(NAME aimer_spin_selection_test COMMAND aimer_spin_selection_test)
 
+    add_executable(aimer_pitch_offset_test tests/aimer_pitch_offset_test.cpp)
+    target_compile_definitions(
+        aimer_pitch_offset_test PRIVATE
+        AIMER_PITCH_OFFSET_TEST_CONFIG_DIR="${PROJECT_SOURCE_DIR}/tests")
+    target_link_libraries(
+        aimer_pitch_offset_test PRIVATE ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim tools)
+    add_test(NAME aimer_pitch_offset_test COMMAND aimer_pitch_offset_test)
+
     add_executable(target_layout_test tests/target_layout_test.cpp)
     target_compile_definitions(
         target_layout_test PRIVATE

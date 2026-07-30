@@ -1,0 +1,10 @@
+yaw_offset: 0
+pitch_offset:
+  near: {distance: 2.0, offset: -2.0}
+  far: {distance: 6.0, offset: 2.0}
+comming_angle: 60
+leaving_angle: 60
+min_spin_speed: 2
+decision_speed: 12
+high_speed_delay_time: 0
+low_speed_delay_time: 0

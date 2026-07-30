@@ -433,13 +433,18 @@ camera +Y（下） → gimbal -Z（下）
 yaw = atan2(y_world, x_world) + yaw_offset
 ```
 
-`pitch_rad` 使用项目控制器符号约定，向上为负、向下为正。它已经包含弹道下坠补偿和 `pitch_offset`：
+`pitch_rad` 使用项目控制器符号约定，向上为负、向下为正。它已经包含弹道下坠补偿和按最终预测
+装甲板水平距离计算的 `pitch_offset(distance)`：
 
 ```text
-pitch = -(ballistic_elevation + pitch_offset)
+ratio = clamp((distance - near.distance) / (far.distance - near.distance), 0, 1)
+pitch_offset(distance) = near.offset + ratio * (far.offset - near.offset)
+pitch = -(ballistic_elevation + pitch_offset(distance))
 ```
 
-因此下游不应再次反号、再次加入弹道补偿或将其解释为标准 ROS 绕 `+Y` 的欧拉角，除非控制器接口明确进行了对应转换。
+`distance` 和两个标定距离的单位均为 m，offset 单位为 degree，计算输出前转换为 rad。目标距离落在
+标定区间外时使用最近端点的 offset。旧的标量 `pitch_offset` 仍按固定补偿读取。下游不应再次反号、
+再次加入弹道补偿或将其解释为标准 ROS 绕 `+Y` 的欧拉角，除非控制器接口明确进行了对应转换。
 
 ## 7. YAML 配置参考
 
@@ -511,7 +516,10 @@ min_confidence: 0.8
 | 配置项 | 单位 | 说明 |
 |---|---|---|
 | `yaw_offset` | degree | yaw 固定补偿 |
-| `pitch_offset` | degree | pitch/弹道固定补偿 |
+| `pitch_offset.near.distance` | m | pitch 近端标定水平距离，非负有限数 |
+| `pitch_offset.near.offset` | degree | 近端 pitch/弹道补偿 |
+| `pitch_offset.far.distance` | m | pitch 远端标定水平距离，必须大于近端距离 |
+| `pitch_offset.far.offset` | degree | 远端 pitch/弹道补偿；两点之间线性插值，区间外钳制 |
 | `high_speed_delay_time` | s | 高转速目标附加预测时间 |
 | `low_speed_delay_time` | s | 低转速目标附加预测时间 |
 | `first_tolerance` | degree | 近距离开火角度阈值 |

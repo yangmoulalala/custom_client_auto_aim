@@ -4,6 +4,7 @@
 #include <Eigen/Dense>
 #include <chrono>
 #include <list>
+#include <optional>
 
 #include "io/command.hpp"
 #include "target.hpp"
@@ -31,9 +32,16 @@ public:
     io::ShootMode shoot_mode, bool to_now = true);
 
 private:
+  struct PitchOffsetPoint
+  {
+    double distance;
+    double offset;
+  };
+
   double yaw_offset_;
   std::optional<double> left_yaw_offset_, right_yaw_offset_;
-  double pitch_offset_;
+  PitchOffsetPoint near_pitch_offset_;
+  PitchOffsetPoint far_pitch_offset_;
   double comming_angle_;
   double leaving_angle_;
   double min_spin_speed_;
@@ -43,6 +51,7 @@ private:
   double decision_speed_;
 
   AimPoint choose_aim_point(const Target & target);
+  double pitch_offset(double distance) const;
 };
 
 }  // namespace auto_aim

@@ -2,8 +2,10 @@
 
 #include <yaml-cpp/yaml.h>
 
+#include <algorithm>
 #include <cmath>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 #include "tools/logger.hpp"
@@ -12,12 +14,66 @@
 
 namespace auto_aim
 {
+namespace
+{
+constexpr double DEGREE_TO_RADIAN = 1.0 / 57.3;
+
+struct ConfigPitchOffsetPoint
+{
+  double distance;
+  double offset;
+};
+
+ConfigPitchOffsetPoint read_pitch_offset_point(const YAML::Node & node, const std::string & name)
+{
+  if (!node.IsMap() || !node["distance"].IsDefined() || !node["offset"].IsDefined()) {
+    throw std::invalid_argument(
+      "pitch_offset." + name + " must contain distance and offset");
+  }
+
+  try {
+    return {node["distance"].as<double>(), node["offset"].as<double>() * DEGREE_TO_RADIAN};
+  } catch (const YAML::Exception &) {
+    throw std::invalid_argument(
+      "pitch_offset." + name + " distance and offset must be numbers");
+  }
+}
+}  // namespace
+
 Aimer::Aimer(const std::string & config_path)
 : left_yaw_offset_(std::nullopt), right_yaw_offset_(std::nullopt)
 {
   auto yaml = YAML::LoadFile(config_path);
   yaw_offset_ = yaml["yaw_offset"].as<double>() / 57.3;        // degree to rad
-  pitch_offset_ = yaml["pitch_offset"].as<double>() / 57.3;    // degree to rad
+  const auto pitch_offset = yaml["pitch_offset"];
+  if (pitch_offset.IsScalar()) {
+    double offset;
+    try {
+      offset = pitch_offset.as<double>() * DEGREE_TO_RADIAN;
+    } catch (const YAML::Exception &) {
+      throw std::invalid_argument("pitch_offset must be a number or a near/far mapping");
+    }
+    if (!std::isfinite(offset)) {
+      throw std::invalid_argument("pitch_offset must be finite");
+    }
+    near_pitch_offset_ = {0.0, offset};
+    far_pitch_offset_ = {1.0, offset};
+  } else if (pitch_offset.IsMap()) {
+    const auto near = read_pitch_offset_point(pitch_offset["near"], "near");
+    const auto far = read_pitch_offset_point(pitch_offset["far"], "far");
+    if (
+      !std::isfinite(near.distance) || near.distance < 0.0 ||
+      !std::isfinite(far.distance) || far.distance <= near.distance ||
+      !std::isfinite(near.offset) || !std::isfinite(far.offset)) {
+      throw std::invalid_argument(
+        "pitch_offset distances and offsets must be finite, with 0 <= near.distance < "
+        "far.distance");
+    }
+    near_pitch_offset_ = {near.distance, near.offset};
+    far_pitch_offset_ = {far.distance, far.offset};
+  } else {
+    throw std::invalid_argument("pitch_offset must be a number or a near/far mapping");
+  }
   comming_angle_ = yaml["comming_angle"].as<double>() / 57.3;  // degree to rad
   leaving_angle_ = yaml["leaving_angle"].as<double>() / 57.3;  // degree to rad
   min_spin_speed_ = yaml["min_spin_speed"].as<double>();
@@ -122,8 +178,10 @@ io::Command Aimer::aim(
 
   // 计算最终角度
   Eigen::Vector3d final_xyz = debug_aim_point.xyza.head(3);
+  const double final_distance = std::hypot(final_xyz.x(), final_xyz.y());
   double yaw = std::atan2(final_xyz.y(), final_xyz.x()) + yaw_offset_;
-  double pitch = -(current_traj.pitch + pitch_offset_);  //世界坐标系下pitch向上为负
+  double pitch =
+    -(current_traj.pitch + pitch_offset(final_distance));  // 世界坐标系下pitch向上为负
   return {true, false, yaw, pitch};
 }
 
@@ -144,6 +202,16 @@ io::Command Aimer::aim(
   command.yaw = command.yaw - yaw_offset_ + yaw_offset;
 
   return command;
+}
+
+double Aimer::pitch_offset(double distance) const
+{
+  const double ratio = std::clamp(
+    (distance - near_pitch_offset_.distance) /
+      (far_pitch_offset_.distance - near_pitch_offset_.distance),
+    0.0, 1.0);
+  return near_pitch_offset_.offset +
+         ratio * (far_pitch_offset_.offset - near_pitch_offset_.offset);
 }
 
 AimPoint Aimer::choose_aim_point(const Target & target)

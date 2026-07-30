@@ -74,13 +74,17 @@ outpost_max_temp_lost_count: 25
 #####-----aimer参数-----#####
 # yaw 固定补偿，degree；正值使输出 yaw 增大。仅用于稳定系统偏差。
 yaw_offset: -1.5
-# pitch 固定补偿，degree；输出为 -(弹道仰角+pitch_offset)，正值使输出更负。
-pitch_offset: -2.5
+# pitch 两点补偿；distance 为最终预测装甲板水平距离，m；offset 为角度补偿，degree。
+# 要求 0<=near.distance<far.distance 且全部为有限数；两点之间线性插值，区间外钳制到端点。
+# 输出为 -(弹道仰角+offset)，正 offset 使输出更负。修改前应在两个距离分别实测固定偏差。
+pitch_offset:
+  near: {distance: 2.0, offset: -2.5}
+  far: {distance: 4.0, offset: -1}
 # 普通目标小陀螺选板窗口，degree；delta=预测装甲朝向-车中心视线方向。
 # w>0: -comming<=delta<leaving；w<0: -leaving<delta<=comming。建议 0<=leaving<=comming<=180。
 # comming 增大将更早选中进入侧，leaving 增大将更晚放弃离开侧；前哨站固定使用 70/30。
-comming_angle: 30
-leaving_angle: 30
+comming_angle: 60
+leaving_angle: 60
 # 小陀螺选板角速度阈值，rad/s，非负有限数。
 # |w|<=阈值使用正面 +/-60 degree 锁定选板；|w|>阈值使用 comming/leaving。
 min_spin_speed: 2
@@ -94,9 +98,9 @@ low_speed_delay_time: 0.0
 
 #####-----shooter参数-----#####
 # 水平距离<=judge_distance 时的 yaw 开火容差，degree；增大更易开火，也会增大误差。
-first_tolerance: 2.5
+first_tolerance: 5
 # 水平距离>judge_distance 时的 yaw 开火容差，degree。
-second_tolerance: 2.5
+second_tolerance: 5
 # 近/远容差切换距离，m，使用目标中心水平距离；两容差相同时此参数无效。
 judge_distance: 3
 # 自瞄开火开关；false 仍输出角度，但 shoot=false。适配器还有 control.allow_fire 二次门控。
