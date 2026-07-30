@@ -9,19 +9,18 @@
 #include <deque>
 #include <filesystem>
 #include <fstream>
-#include <limits>
 #include <memory>
 #include <opencv2/core/eigen.hpp>
 #include <opencv2/opencv.hpp>
 #include <rclcpp/executors/single_threaded_executor.hpp>
 #include <rclcpp/rclcpp.hpp>
-#include <sensor_msgs/image_encodings.hpp>
-#include <sensor_msgs/msg/image.hpp>
+#include <sensor_msgs/msg/compressed_image.hpp>
 #include <sensor_msgs/msg/imu.hpp>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
+#include "calibration/ros_calibration_utils.hpp"
 #include "tools/logger.hpp"
 #include "tools/math_tools.hpp"
 
@@ -32,13 +31,8 @@ const std::string keys =
 
 namespace
 {
-using ImageMsg = sensor_msgs::msg::Image;
+using ImageMsg = sensor_msgs::msg::CompressedImage;
 using ImuMsg = sensor_msgs::msg::Imu;
-
-std::int64_t stamp_to_ns(const builtin_interfaces::msg::Time & stamp)
-{
-  return static_cast<std::int64_t>(stamp.sec) * 1000000000LL + stamp.nanosec;
-}
 
 std::vector<cv::Point3f> make_object_points(
   const cv::Size & pattern_size, double square_size_mm)
@@ -69,76 +63,6 @@ bool find_chessboard_corners(
     gray, corners, {11, 11}, {-1, -1},
     {cv::TermCriteria::EPS | cv::TermCriteria::COUNT, 30, 0.001});
   return true;
-}
-
-bool image_to_bgr(const ImageMsg::ConstSharedPtr & msg, cv::Mat & image)
-{
-  if (!msg || msg->width == 0 || msg->height == 0) return false;
-
-  int cv_type = 0;
-  std::size_t bytes_per_pixel = 0;
-  if (
-    msg->encoding == sensor_msgs::image_encodings::BGR8 ||
-    msg->encoding == sensor_msgs::image_encodings::RGB8) {
-    cv_type = CV_8UC3;
-    bytes_per_pixel = 3;
-  } else if (msg->encoding == sensor_msgs::image_encodings::MONO8) {
-    cv_type = CV_8UC1;
-    bytes_per_pixel = 1;
-  } else {
-    return false;
-  }
-
-  const auto minimum_step = static_cast<std::size_t>(msg->width) * bytes_per_pixel;
-  const auto required_size = static_cast<std::size_t>(msg->step) * msg->height;
-  if (msg->step < minimum_step || msg->data.size() < required_size) return false;
-
-  cv::Mat source(
-    static_cast<int>(msg->height), static_cast<int>(msg->width), cv_type,
-    const_cast<std::uint8_t *>(msg->data.data()), static_cast<std::size_t>(msg->step));
-  if (msg->encoding == sensor_msgs::image_encodings::BGR8) {
-    image = source;
-  } else if (msg->encoding == sensor_msgs::image_encodings::RGB8) {
-    cv::cvtColor(source, image, cv::COLOR_RGB2BGR);
-  } else {
-    cv::cvtColor(source, image, cv::COLOR_GRAY2BGR);
-  }
-  return true;
-}
-
-bool imu_orientation(const ImuMsg::ConstSharedPtr & msg, Eigen::Quaterniond & q)
-{
-  if (!msg || msg->orientation_covariance[0] == -1.0) return false;
-  const auto & orientation = msg->orientation;
-  if (
-    !std::isfinite(orientation.w) || !std::isfinite(orientation.x) ||
-    !std::isfinite(orientation.y) || !std::isfinite(orientation.z)) {
-    return false;
-  }
-
-  q = {orientation.w, orientation.x, orientation.y, orientation.z};
-  if (!std::isfinite(q.squaredNorm()) || q.squaredNorm() < 1e-12) return false;
-  q.normalize();
-  return true;
-}
-
-ImuMsg::ConstSharedPtr nearest_imu(
-  const std::deque<ImuMsg::ConstSharedPtr> & buffer, std::int64_t image_stamp_ns,
-  std::int64_t tolerance_ns)
-{
-  ImuMsg::ConstSharedPtr nearest;
-  auto nearest_delta = std::numeric_limits<std::int64_t>::max();
-  for (const auto & imu : buffer) {
-    const auto imu_stamp_ns = stamp_to_ns(imu->header.stamp);
-    const auto delta = imu_stamp_ns >= image_stamp_ns ? imu_stamp_ns - image_stamp_ns
-                                                      : image_stamp_ns - imu_stamp_ns;
-    if (delta < nearest_delta) {
-      nearest = imu;
-      nearest_delta = delta;
-      if (delta == 0) break;
-    }
-  }
-  return nearest && nearest_delta <= tolerance_ns ? nearest : nullptr;
 }
 
 int next_sample_index(const std::filesystem::path & output_folder)
@@ -221,7 +145,7 @@ int main(int argc, char * argv[])
     pattern_size = {yaml["pattern_cols"].as<int>(), yaml["pattern_rows"].as<int>()};
     square_size_mm = yaml["square_size_mm"].as<double>();
     image_topic = yaml["ros_image_topic"] ? yaml["ros_image_topic"].as<std::string>()
-                                          : std::string("/camera/image_raw");
+                                          : std::string("/rm_video/image_processed");
     imu_topic =
       yaml["ros_imu_topic"] ? yaml["ros_imu_topic"].as<std::string>() : std::string("/imu/data");
     sync_tolerance_ms = yaml["sync_tolerance_ms"] ? yaml["sync_tolerance_ms"].as<double>() : 5.0;
@@ -338,25 +262,25 @@ int main(int argc, char * argv[])
       }
 
       if (pending_image) {
-        const auto image_stamp_ns = stamp_to_ns(pending_image->header.stamp);
-        auto imu = nearest_imu(imu_buffer, image_stamp_ns, tolerance_ns);
+        const auto image_stamp_ns = calibration::stamp_to_ns(pending_image->header.stamp);
+        auto imu = calibration::nearest_imu(imu_buffer, image_stamp_ns, tolerance_ns);
         if (imu) {
           processed_sequence = pending_sequence;
           current_sequence = pending_sequence;
           current_owner = pending_image;
           pending_image.reset();
 
-          if (!image_to_bgr(current_owner, current_image)) {
+          if (!calibration::decode_compressed_image(current_owner, current_image)) {
             RCLCPP_WARN_THROTTLE(
               node->get_logger(), *node->get_clock(), 1000,
-              "Unsupported or invalid image; expected bgr8, rgb8 or mono8");
+              "Invalid compressed image; expected a decodable JPEG payload");
             current_image.release();
             current_detection_ok = false;
           } else if (current_image.size() != calibration_image_size) {
             throw std::runtime_error(fmt::format(
               "Input resolution {}x{} differs from calibrated resolution {}x{}", current_image.cols,
               current_image.rows, calibration_image_size.width, calibration_image_size.height));
-          } else if (!imu_orientation(imu, current_q)) {
+          } else if (!calibration::imu_orientation(imu, current_q)) {
             RCLCPP_WARN_THROTTLE(
               node->get_logger(), *node->get_clock(), 1000, "Invalid IMU orientation");
             current_image.release();

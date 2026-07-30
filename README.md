@@ -67,7 +67,6 @@ sudo apt install -y \
   python3-pyqt5 python3-tornado \
   ros-jazzy-ament-cmake ros-jazzy-ament-cmake-python \
   ros-jazzy-ament-cmake-pytest \
-  ros-jazzy-image-transport ros-jazzy-compressed-image-transport \
   ros-jazzy-rosbag2-py ros-jazzy-rosbag2-storage-mcap
 ```
 
@@ -196,25 +195,20 @@ git clone https://github.com/dheera/rosboard.git
 内参必须对应 `/rm_video/image_processed` 的实际分辨率、ROI 和旋转。改变裁剪、旋转、宽高比、
 镜头或相机安装位置后需要重新标定；曝光、对焦和镜头光圈也应固定。
 
-当前 `calibration.yaml` 配置为 `10 x 6` 个棋盘格内部角点，即 `11 x 7` 个黑白格，单格边长
-`75 mm`。使用其他标定板时先按实物修改。
+当前 `calibration.yaml` 配置为 `10 x 7` 个棋盘格内部角点，即 `11 x 8` 个黑白格，单格边长
+`50 mm`。使用其他标定板时先按实物修改。
 
 ### 准备标定图像
 
-标定程序接受原始 `sensor_msgs/Image`，视频节点发布的是 JPEG `CompressedImage`。保持适配器运行，
-在单独终端将 processed 图像临时解码：
+标定程序直接订阅 `/rm_video/image_processed` 的 JPEG `sensor_msgs/msg/CompressedImage`。先保持
+适配器运行，不需要额外的图像转换进程：
 
 ```bash
-ros2 run image_transport republish --ros-args \
-  -p in_transport:=compressed \
-  -p out_transport:=raw \
-  -p qos_overrides./rm_video/image_processed.subscription.reliability:=best_effort \
-  -r in/compressed:=/rm_video/image_processed \
-  -r out:=/calibration/image_raw
+ros2 launch custom_client_adapter custom_client_adapter.launch.py
 ```
 
 ```bash
-ros2 topic hz /calibration/image_raw
+ros2 topic hz /rm_video/image_processed
 ```
 
 ### 标定相机内参
@@ -240,6 +234,11 @@ ros2 topic hz /calibration/image_raw
 yaw/pitch/roll 方向和正负号正确；再让云台取得至少 10 个旋转差异明显的姿态，每个有效姿态按
 `s`，最后按 `q`。将输出中的 `R_gimbal2imubody`、`R_camera2gimbal` 和 `t_camera2gimbal` 写入
 `custom_client.yaml`；平移单位为米。
+
+手眼工具与 `custom_client` 使用相同的时间戳匹配方式：遍历最多 200 条 IMU 缓存，选择与图像
+`header.stamp` 绝对时间差最小且不超过 `sync_tolerance_ms` 的样本。暂时没有合格样本时最多等待
+`sync_wait_ms`，超时丢弃该图像；工具不会插值、外推或改写消息时间戳。固定时差应通过适配器的
+`timestamp_offset_sec` 校正，不能靠放大同步容差掩盖。
 
 坐标系、时间戳和安全语义的完整定义见
 [Custom Client 接口手册](docs/auv_client_ros_manual.md)。

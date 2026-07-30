@@ -1,22 +1,22 @@
-# 棋盘格参数：横向11格、纵向7格，对应内部角点10x6
+# 棋盘格参数：横向11格、纵向8格，对应内部角点10x7
 pattern_cols: 10
-pattern_rows: 6
-square_size_mm: 75
+pattern_rows: 7
+square_size_mm: 50
 
-# ROS2 标定工具订阅原始 sensor_msgs/Image；用 README 中的 image_transport 命令将
-# /rm_video/image_processed 临时解码到此话题。不要直接填 CompressedImage 话题。
-ros_image_topic: "/calibration/image_raw"
-# 手眼标定使用的 IMU 姿态话题，时间戳必须和图像使用同一 ROS 时钟。
+# ROS2 标定工具直接订阅的 JPEG sensor_msgs/CompressedImage 话题，必须与自瞄最终画面一致。
+ros_image_topic: "/rm_video/image_processed"
+# 手眼标定使用的 IMU 姿态话题；图像和 IMU 的 header.stamp 必须使用同一 ROS 时钟。
 ros_imu_topic: "/rm_mqtt/imu"
-# 手眼标定图像/IMU 的最大时间差和最长等待时间，单位 ms；不要靠放大它们掩盖时间戳错误。
-sync_tolerance_ms: 5
-sync_wait_ms: 10
+# 图像与最近 IMU 的最大时间差，单位 ms，必须非负；增大会增加姿态错配风险。
+sync_tolerance_ms: 100
+# 等待容差内 IMU 的最长时间，单位 ms，必须非负；超时丢弃图像，不插值或外推姿态。
+sync_wait_ms: 200
 
 # 先运行 ros_calibrate_camera，并将其输出复制到这里，再进行手眼标定。
 calibration_image_width: 480
 calibration_image_height: 270
-camera_matrix: [689.17782867242408, 0, 263.03005188708039, 0, 688.65887141546, 139.58627690456646, 0, 0, 1]
-distort_coeffs: [-0.27214187315547, 1.4224009167280049, 0.0045267040990549148, 0.0055930843150677383, 0]
+camera_matrix: [721.05129460224953, 0, 250.14452151918877, 0, 719.46932979581152, 139.75331117068609, 0, 0, 1]
+distort_coeffs: [-0.16665637449145251, -0.75513154087444823, -0.0015350990693406591, 0.0021629593172751162, 0]
 
 # gimbal 轴到 IMU body 轴的机械安装映射，3x3 行主序；手眼工具只校验并原样写回。
 R_gimbal2imubody: [1, 0, 0, 0, 1, 0,  0, 0, 1]

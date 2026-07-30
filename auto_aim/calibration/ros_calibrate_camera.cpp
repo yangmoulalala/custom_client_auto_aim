@@ -13,12 +13,12 @@
 #include <opencv2/opencv.hpp>
 #include <rclcpp/executors/single_threaded_executor.hpp>
 #include <rclcpp/rclcpp.hpp>
-#include <sensor_msgs/image_encodings.hpp>
-#include <sensor_msgs/msg/image.hpp>
+#include <sensor_msgs/msg/compressed_image.hpp>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
+#include "calibration/ros_calibration_utils.hpp"
 #include "tools/logger.hpp"
 
 const std::string keys =
@@ -28,7 +28,7 @@ const std::string keys =
 
 namespace
 {
-using ImageMsg = sensor_msgs::msg::Image;
+using ImageMsg = sensor_msgs::msg::CompressedImage;
 
 std::vector<cv::Point3f> make_object_points(
   const cv::Size & pattern_size, double square_size_mm)
@@ -58,41 +58,6 @@ bool find_chessboard_corners(
   cv::cornerSubPix(
     gray, corners, {11, 11}, {-1, -1},
     {cv::TermCriteria::EPS | cv::TermCriteria::COUNT, 30, 0.001});
-  return true;
-}
-
-bool image_to_bgr(const ImageMsg::ConstSharedPtr & msg, cv::Mat & image)
-{
-  if (!msg || msg->width == 0 || msg->height == 0) return false;
-
-  int cv_type = 0;
-  std::size_t bytes_per_pixel = 0;
-  if (
-    msg->encoding == sensor_msgs::image_encodings::BGR8 ||
-    msg->encoding == sensor_msgs::image_encodings::RGB8) {
-    cv_type = CV_8UC3;
-    bytes_per_pixel = 3;
-  } else if (msg->encoding == sensor_msgs::image_encodings::MONO8) {
-    cv_type = CV_8UC1;
-    bytes_per_pixel = 1;
-  } else {
-    return false;
-  }
-
-  const auto minimum_step = static_cast<std::size_t>(msg->width) * bytes_per_pixel;
-  const auto required_size = static_cast<std::size_t>(msg->step) * msg->height;
-  if (msg->step < minimum_step || msg->data.size() < required_size) return false;
-
-  cv::Mat source(
-    static_cast<int>(msg->height), static_cast<int>(msg->width), cv_type,
-    const_cast<std::uint8_t *>(msg->data.data()), static_cast<std::size_t>(msg->step));
-  if (msg->encoding == sensor_msgs::image_encodings::BGR8) {
-    image = source;
-  } else if (msg->encoding == sensor_msgs::image_encodings::RGB8) {
-    cv::cvtColor(source, image, cv::COLOR_RGB2BGR);
-  } else {
-    cv::cvtColor(source, image, cv::COLOR_GRAY2BGR);
-  }
   return true;
 }
 
@@ -172,7 +137,7 @@ int main(int argc, char * argv[])
     pattern_size = {yaml["pattern_cols"].as<int>(), yaml["pattern_rows"].as<int>()};
     square_size_mm = yaml["square_size_mm"].as<double>();
     image_topic = yaml["ros_image_topic"] ? yaml["ros_image_topic"].as<std::string>()
-                                          : std::string("/camera/image_raw");
+                                          : std::string("/rm_video/image_processed");
   } catch (const std::exception & e) {
     tools::logger()->error("[ROSCalibration] Failed to load configuration: {}", e.what());
     return 1;
@@ -234,10 +199,10 @@ int main(int argc, char * argv[])
         current_sequence = latest_sequence;
         processed_sequence = latest_sequence;
 
-        if (!image_to_bgr(current_owner, current_image)) {
+        if (!calibration::decode_compressed_image(current_owner, current_image)) {
           RCLCPP_WARN_THROTTLE(
             node->get_logger(), *node->get_clock(), 1000,
-            "Unsupported or invalid image; expected bgr8, rgb8 or mono8");
+            "Invalid compressed image; expected a decodable JPEG payload");
           current_image.release();
           current_detection_ok = false;
         } else if (!image_size.empty() && current_image.size() != image_size) {

@@ -16,7 +16,7 @@ ros_debug_topic: "/auto_aim/debug"
 bullet_speed: 24.0
 # header.stamp 未包含的固定图像延迟，ms，范围 [0,max_frame_age_ms)；增大将增加预测前推量。
 # 不修改 ROS 时间戳，不参与图像/IMU 配对，也不改变 Tracker 相邻帧 dt。
-upstream_latency_ms: 120.0
+upstream_latency_ms: 140.0
 
 # camera_matrix 标定图像尺寸，pixel，正整数。运行画面可同比缩放，宽高比误差不得超过 1%。
 calibration_image_width: 480
@@ -75,12 +75,12 @@ outpost_max_temp_lost_count: 25
 # yaw 固定补偿，degree；正值使输出 yaw 增大。仅用于稳定系统偏差。
 yaw_offset: -1.5
 # pitch 固定补偿，degree；输出为 -(弹道仰角+pitch_offset)，正值使输出更负。
-pitch_offset: -0.5
+pitch_offset: -2.5
 # 普通目标小陀螺选板窗口，degree；delta=预测装甲朝向-车中心视线方向。
 # w>0: -comming<=delta<leaving；w<0: -leaving<delta<=comming。建议 0<=leaving<=comming<=180。
 # comming 增大将更早选中进入侧，leaving 增大将更晚放弃离开侧；前哨站固定使用 70/30。
-comming_angle: 60
-leaving_angle: 60
+comming_angle: 30
+leaving_angle: 30
 # 小陀螺选板角速度阈值，rad/s，非负有限数。
 # |w|<=阈值使用正面 +/-60 degree 锁定选板；|w|>阈值使用 comming/leaving。
 min_spin_speed: 2
@@ -96,7 +96,7 @@ low_speed_delay_time: 0.0
 # 水平距离<=judge_distance 时的 yaw 开火容差，degree；增大更易开火，也会增大误差。
 first_tolerance: 2.5
 # 水平距离>judge_distance 时的 yaw 开火容差，degree。
-second_tolerance: 5
+second_tolerance: 2.5
 # 近/远容差切换距离，m，使用目标中心水平距离；两容差相同时此参数无效。
 judge_distance: 3
 # 自瞄开火开关；false 仍输出角度，但 shoot=false。适配器还有 control.allow_fire 二次门控。

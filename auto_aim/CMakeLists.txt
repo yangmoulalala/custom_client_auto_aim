@@ -108,14 +108,19 @@ if(TARGET auv_io)
     find_package(rclcpp REQUIRED)
     find_package(sensor_msgs REQUIRED)
 
+    add_library(ros_calibration_utils STATIC calibration/ros_calibration_utils.cpp)
+    target_link_libraries(
+        ros_calibration_utils PUBLIC ${OpenCV_LIBS} Eigen3::Eigen)
+    ament_target_dependencies(ros_calibration_utils PUBLIC sensor_msgs)
+
     add_executable(ros_calibrate_camera calibration/ros_calibrate_camera.cpp)
     target_link_libraries(
-        ros_calibrate_camera ${OpenCV_LIBS} fmt::fmt yaml-cpp tools)
+        ros_calibrate_camera ${OpenCV_LIBS} fmt::fmt yaml-cpp tools ros_calibration_utils)
     ament_target_dependencies(ros_calibrate_camera rclcpp sensor_msgs)
 
     add_executable(ros_calibrate_handeye calibration/ros_calibrate_handeye.cpp)
     target_link_libraries(
-        ros_calibrate_handeye ${OpenCV_LIBS} fmt::fmt yaml-cpp tools)
+        ros_calibrate_handeye ${OpenCV_LIBS} fmt::fmt yaml-cpp tools ros_calibration_utils)
     ament_target_dependencies(ros_calibrate_handeye rclcpp sensor_msgs)
 endif()
 
@@ -175,6 +180,13 @@ if(BUILD_TESTING)
     add_test(NAME target_layout_test COMMAND target_layout_test)
 
     if(TARGET auv_io)
+        add_executable(
+            ros_calibration_utils_test tests/ros_calibration_utils_test.cpp)
+        target_link_libraries(
+            ros_calibration_utils_test ros_calibration_utils)
+        ament_target_dependencies(ros_calibration_utils_test sensor_msgs)
+        add_test(NAME ros_calibration_utils_test COMMAND ros_calibration_utils_test)
+
         add_executable(auv_client_io_test tests/auv_client_io_test.cpp)
         target_compile_definitions(
             auv_client_io_test PRIVATE

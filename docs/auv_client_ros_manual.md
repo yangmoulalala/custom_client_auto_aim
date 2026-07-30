@@ -540,26 +540,15 @@ ROS 标定工具使用棋盘格，板参数配置在 `auto_aim/configs/calibrati
 
 ```yaml
 pattern_cols: 10
-pattern_rows: 6
-square_size_mm: 75
-ros_image_topic: "/calibration/image_raw"
+pattern_rows: 7
+square_size_mm: 50
+ros_image_topic: "/rm_video/image_processed"
 ros_imu_topic: "/rm_mqtt/imu"
 ```
 
-`custom_client` 运行时订阅 `CompressedImage`，但两个标定工具订阅的是原始 `sensor_msgs/Image`。
-当前适配器输出需要先临时解码，并通过 QoS override 兼容视频发布端的 best-effort QoS：
-
-```bash
-ros2 run image_transport republish --ros-args \
-  -p in_transport:=compressed \
-  -p out_transport:=raw \
-  -p qos_overrides./rm_video/image_processed.subscription.reliability:=best_effort \
-  -r in/compressed:=/rm_video/image_processed \
-  -r out:=/calibration/image_raw
-```
-
-标定使用的必须是最终送入自瞄的 processed 画面。标定后改变视频 ROI、旋转、宽高比或相机安装
-位置时应重新标定；转换进程会保留原消息时间戳，以便手眼工具继续与 IMU 配对。
+两个标定工具均以 best-effort、keep last 1 直接订阅 `/rm_video/image_processed` 的 JPEG
+`sensor_msgs/msg/CompressedImage` 并在进程内解码，不需要 `image_transport republish`。标定使用的
+必须是最终送入自瞄的 processed 画面；改变视频 ROI、旋转、宽高比或相机安装位置时应重新标定。
 
 ### 8.1 相机内参标定
 
@@ -572,7 +561,7 @@ ros2 run image_transport republish --ros-args \
 
 操作流程：
 
-1. 保持转换端持续发布固定分辨率、与运行时 processed 画面一致的原始 `Image`。
+1. 保持适配器持续发布固定分辨率、与运行时一致的 processed `CompressedImage`。
 2. 标定板被正确识别时按 `s` 接受当前帧。
 3. 让标定板覆盖画面中心、四角、远近位置和不同倾角，建议采集至少 10 帧。
 4. 按 `q` 结束采样并求解。
@@ -598,7 +587,7 @@ ros2 run image_transport republish --ros-args \
 1. 固定标定板，整个采样过程不得移动标定板。
 2. 按实际机械安装方向预先填写 `R_gimbal2imubody`。
 3. 转动云台到不同 yaw、pitch、roll；预览窗口会显示由 IMU 计算的角度，可用它检查轴向和正负号。
-4. 每个有效姿态按 `s` 保存一组同步 Image/IMU 样本。
+4. 每个有效姿态按 `s` 保存一组按 `header.stamp` 最近邻匹配的图像/IMU 样本。
 5. 至少需要 3 组有效姿态，建议采集 10 组以上且旋转差异明显的姿态。
 6. 按 `q` 求解。
 
@@ -609,6 +598,10 @@ ros2 run image_transport republish --ros-args \
 - `t_camera2gimbal`
 
 手眼算法实际求解 `R_camera2gimbal` 和 `t_camera2gimbal`。`R_gimbal2imubody` 是机械轴向映射，由配置读入、校验后原样写回结果；它不会由普通手眼方程自动辨识。
+
+手眼工具与 `custom_client` 使用相同的最近邻规则：图像只匹配当前 200 条有界 IMU 缓存中时间差
+绝对值最小且不超过 `sync_tolerance_ms` 的样本。暂时无匹配样本时最多等待 `sync_wait_ms`；超时后
+丢弃图像，不插值、不外推，也不改写任一消息的时间戳。
 
 ## 9. 上下游集成要求
 
@@ -624,8 +617,8 @@ ros2 run image_transport republish --ros-args \
 - 全部实时话题使用 best-effort、volatile、keep last 1。
 - 同机高带宽图像场景优先启用 DDS 共享内存，并检查实际 DDS 配置是否生效。
 
-节点只做最近邻配对，不做姿态插值。不要通过增大 QoS depth、`sync_tolerance_ms` 或
-`sync_wait_ms` 保存历史数据来掩盖时间戳偏移和处理性能问题。
+`custom_client` 和手眼标定工具只做最近邻配对，不做姿态插值。不要通过增大 QoS depth、
+`sync_tolerance_ms` 或 `sync_wait_ms` 保存历史数据来掩盖时间戳偏移和处理性能问题。
 
 ### 9.2 控制/发射接收端
 
